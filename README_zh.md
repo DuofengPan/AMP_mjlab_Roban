@@ -122,6 +122,12 @@ python scripts/csv_to_npz.py --help
 
 只要上述目录中存在可用 NPZ，训练配置会自动加载。
 
+## biped_s17 迁移
+
+若将 AMP 训练迁移到其他机器人（如 Kuavo **biped_s17**），请参阅专用文档：
+
+- [biped_s17 迁移指南（运动数据 + 任务配置 + 部署）](README_biped_s17_migration_zh.md)
+
 ## 目录说明
 
 - `src/tasks/amp_loco`：AMP locomotion/recovery 任务实现

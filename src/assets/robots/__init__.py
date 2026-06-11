@@ -11,3 +11,10 @@ from .unitree_g1.g1_23dof_constants import (
 from .unitree_g1.g1_23dof_constants import (
   get_g1_23dof_robot_cfg as get_g1_23dof_robot_cfg,
 )
+
+from .biped_s17.s17_constants import (
+  S17_ACTION_SCALE as S17_ACTION_SCALE,
+)
+from .biped_s17.s17_constants import (
+  get_biped_s17_robot_cfg as get_biped_s17_robot_cfg,
+)

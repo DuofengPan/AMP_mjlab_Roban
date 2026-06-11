@@ -84,6 +84,7 @@
                     <geom size="0.005" pos="-0.0538 -0.0415 -0.03" type="sphere" class="collision"/>
                     <geom size="0.005" pos="0.1510 0 -0.03" type="sphere" class="collision"/>
                     <geom size="0.005" pos="-0.0538 0 -0.03" type="sphere" class="collision"/>
+                    <site name="left_foot" pos="0.04 0 -0.035" size="0.01" rgba="1 0 0 1"/>
                   </body>
                 </body>
               </body>
@@ -130,6 +131,7 @@
                     <geom size="0.005" pos="-0.0538 -0.0415 -0.03" type="sphere" class="collision"/>
                     <geom size="0.005" pos="0.1510 0 -0.03" type="sphere" class="collision"/>
                     <geom size="0.005" pos="-0.0538 0 -0.03" type="sphere" class="collision"/>
+                    <site name="right_foot" pos="0.04 0 -0.035" size="0.01" rgba="1 0 0 1"/>
                   </body>
                 </body>
               </body>
@@ -242,6 +244,11 @@
     <motor gear="1" joint="zhead_2_joint" name="zhead_2_joint_motor" ctrllimited="true" ctrlrange="-14.1 14.1" />
   </actuator>
   <sensor>
+    <!-- mjlab AMP task expects these names (see amp_env_cfg builtin_sensor). -->
+    <gyro name="imu_ang_vel" site="imu"/>
+    <velocimeter name="imu_lin_vel" site="imu"/>
+    <accelerometer name="imu_lin_acc" site="imu"/>
+    <!-- Legacy Kuavo / ROS sensor names (kept for compatibility). -->
     <accelerometer name="BodyAcc" site="imu" />
     <velocimeter name="BodyVel" site="imu" />
     <gyro name="BodyGyro" site="imu" />
