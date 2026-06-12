@@ -39,6 +39,7 @@ class PPO:
     def __init__(
         self,
         policy,
+        min_std=None,
         num_learning_epochs=1,
         num_mini_batches=1,
         clip_param=0.2,
@@ -108,6 +109,7 @@ class PPO:
             self.symmetry = None
 
         # PPO components
+        self.min_std = min_std
         self.policy = policy
         self.policy.to(self.device)
         # Create optimizer
@@ -219,6 +221,8 @@ class PPO:
             mean_symmetry_loss = 0
         else:
             mean_symmetry_loss = None
+        skipped_non_finite_batches = 0
+        effective_updates = 0
 
         # generator for mini batches
         if self.policy.is_recurrent:
@@ -274,6 +278,16 @@ class PPO:
                 advantages_batch = advantages_batch.repeat(num_aug, 1)
                 returns_batch = returns_batch.repeat(num_aug, 1)
 
+            if not torch.isfinite(returns_batch).all():
+                skipped_non_finite_batches += 1
+                continue
+
+            if not self._policy_std_is_finite():
+                self._clamp_policy_std()
+                if not self._policy_std_is_finite():
+                    skipped_non_finite_batches += 1
+                    continue
+
             # Recompute actions log prob and entropy for current batch of transitions
             # Note: we need to do this because we updated the policy with the new parameters
             # -- actor
@@ -281,6 +295,9 @@ class PPO:
             actions_log_prob_batch = self.policy.get_actions_log_prob(actions_batch)
             # -- critic
             value_batch = self.policy.evaluate(critic_obs_batch, masks=masks_batch, hidden_states=hid_states_batch[1])
+            if not torch.isfinite(value_batch).all():
+                skipped_non_finite_batches += 1
+                continue
             # -- entropy
             # we only keep the entropy of the first augmentation (the original one)
             mu_batch = self.policy.action_mean[:original_batch_size]
@@ -342,6 +359,10 @@ class PPO:
                 value_loss = torch.max(value_losses, value_losses_clipped).mean()
             else:
                 value_loss = (returns_batch - value_batch).pow(2).mean()
+
+            if not torch.isfinite(value_loss):
+                skipped_non_finite_batches += 1
+                continue
 
             vq_loss = getattr(getattr(self.policy, "actor", None), "vq_loss", None)
             if vq_loss is None:
@@ -407,6 +428,10 @@ class PPO:
                 mseloss = torch.nn.MSELoss()
                 rnd_loss = mseloss(predicted_embedding, target_embedding)
 
+            if not torch.isfinite(loss):
+                skipped_non_finite_batches += 1
+                continue
+
             # Compute the gradients
             # -- For PPO
             self.optimizer.zero_grad()
@@ -424,11 +449,13 @@ class PPO:
             # -- For PPO
             nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
             self.optimizer.step()
+            self._clamp_policy_std()
             # -- For RND
             if self.rnd_optimizer:
                 self.rnd_optimizer.step()
 
             # Store the losses
+            effective_updates += 1
             mean_value_loss += value_loss.item()
             mean_surrogate_loss += surrogate_loss.item()
             mean_entropy += entropy_batch.mean().item()
@@ -442,7 +469,7 @@ class PPO:
                 mean_symmetry_loss += symmetry_loss.item()
 
         # -- For PPO
-        num_updates = self.num_learning_epochs * self.num_mini_batches
+        num_updates = max(effective_updates, 1)
         mean_value_loss /= num_updates
         mean_surrogate_loss /= num_updates
         mean_entropy /= num_updates
@@ -464,6 +491,7 @@ class PPO:
             "entropy": mean_entropy,
             "vq": mean_vq_loss,
             "recon": mean_recon_loss,
+            "skipped_non_finite_batches": float(skipped_non_finite_batches),
         }
         if self.rnd:
             loss_dict["rnd"] = mean_rnd_loss
@@ -475,6 +503,44 @@ class PPO:
     """
     Helper functions
     """
+
+    def _policy_std_is_finite(self) -> bool:
+        if getattr(self.policy, "noise_std_type", None) == "scalar" and hasattr(self.policy, "std"):
+            return bool(torch.isfinite(self.policy.std).all())
+        if getattr(self.policy, "noise_std_type", None) == "log" and hasattr(self.policy, "log_std"):
+            return bool(torch.isfinite(self.policy.log_std).all())
+        return True
+
+    def _clamp_policy_std(self) -> None:
+        """Keep policy noise above configured floor and recover from non-finite std."""
+        if self.min_std is None or not hasattr(self.policy, "noise_std_type"):
+            return
+
+        with torch.no_grad():
+            min_std = torch.as_tensor(self.min_std, device=self.device, dtype=torch.float32)
+            if min_std.ndim == 0:
+                min_std = min_std.unsqueeze(0)
+
+            if getattr(self.policy, "noise_std_type") == "scalar" and hasattr(self.policy, "std"):
+                target_std = self.policy.std
+                if min_std.numel() == 1:
+                    min_std = min_std.expand_as(target_std)
+                elif min_std.numel() != target_std.numel():
+                    fallback = torch.clamp_min(min_std.min(), 1.0e-6)
+                    min_std = fallback.expand_as(target_std)
+                target_std.clamp_(min=min_std)
+                if not torch.isfinite(target_std).all():
+                    target_std.copy_(min_std)
+            elif getattr(self.policy, "noise_std_type") == "log" and hasattr(self.policy, "log_std"):
+                target_log_std = self.policy.log_std
+                if min_std.numel() == 1:
+                    min_std = min_std.expand_as(target_log_std)
+                elif min_std.numel() != target_log_std.numel():
+                    fallback = torch.clamp_min(min_std.min(), 1.0e-6)
+                    min_std = fallback.expand_as(target_log_std)
+                target_log_std.clamp_(min=torch.log(torch.clamp_min(min_std, 1.0e-6)))
+                if not torch.isfinite(target_log_std).all():
+                    target_log_std.copy_(torch.log(torch.clamp_min(min_std, 1.0e-6)))
 
     def broadcast_parameters(self):
         """Broadcast model parameters to all GPUs."""

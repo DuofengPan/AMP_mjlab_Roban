@@ -92,6 +92,21 @@ def _unpack_step(obs, rew, dones, infos):
     return obs, rew, dones, infos
 
 
+def _resolve_min_std(train_cfg: dict, num_actions: int, device: str) -> torch.Tensor:
+    """Build per-action minimum policy std tensor from runner config."""
+    min_std_values = list(train_cfg.get("min_normalized_std", [0.05]))
+    if len(min_std_values) == 0:
+        min_std_values = [0.05] * num_actions
+    elif len(min_std_values) == 1:
+        min_std_values = min_std_values * num_actions
+    elif len(min_std_values) < num_actions:
+        pad_value = min_std_values[-1]
+        min_std_values = min_std_values + [pad_value] * (num_actions - len(min_std_values))
+    elif len(min_std_values) > num_actions:
+        min_std_values = min_std_values[:num_actions]
+    return torch.tensor(min_std_values, device=device, requires_grad=False)
+
+
 class OnPolicyRunner:
     """On-policy runner for training and evaluation."""
 
@@ -164,10 +179,12 @@ class OnPolicyRunner:
             self.alg_cfg["symmetry_cfg"]["_env"] = env
 
         # initialize algorithm
+        alg_class_name = self.alg_cfg["class_name"]
         alg_class = eval(self.alg_cfg.pop("class_name"))
-        self.alg: PPO | Distillation = alg_class(
-            policy, device=self.device, **self.alg_cfg, multi_gpu_cfg=self.multi_gpu_cfg
-        )
+        alg_kwargs = dict(self.alg_cfg, multi_gpu_cfg=self.multi_gpu_cfg)
+        if alg_class_name == "PPO" and "min_std" not in alg_kwargs:
+            alg_kwargs["min_std"] = _resolve_min_std(self.cfg, self.env.num_actions, self.device)
+        self.alg: PPO | Distillation = alg_class(policy, device=self.device, **alg_kwargs)
 
         # store training configuration
         self.num_steps_per_env = self.cfg["num_steps_per_env"]

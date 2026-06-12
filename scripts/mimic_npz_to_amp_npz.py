@@ -171,6 +171,42 @@ def _collect_joint_qpos_indices(model) -> list[int]:
     return indices
 
 
+def _collect_joint_names(model) -> list[str]:
+    """Actuated joint names in MuJoCo qpos order (excludes free joint)."""
+    import mujoco
+
+    names: list[str] = []
+    for jid in range(model.njnt):
+        if int(model.jnt_type[jid]) == int(mujoco.mjtJoint.mjJNT_FREE):
+            continue
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, jid)
+        if name is None:
+            raise ValueError(f"Unnamed joint id={jid}")
+        names.append(name)
+    return names
+
+
+def _build_mimic_joint_remap(source_names: list[str], target_names: list[str]) -> np.ndarray:
+    """Map mimic NPZ joint columns (source order) to target qpos[7:] order."""
+    if len(source_names) != len(target_names):
+        raise ValueError(
+            f"Joint count mismatch: source={len(source_names)} target={len(target_names)}"
+        )
+    remap = np.zeros(len(target_names), dtype=np.int64)
+    for target_idx, name in enumerate(target_names):
+        try:
+            source_idx = source_names.index(name)
+        except ValueError as exc:
+            raise ValueError(f"Target joint {name!r} not found in source MJCF") from exc
+        remap[target_idx] = source_idx
+    return remap
+
+
+def _reorder_mimic_joints(joint_cols: np.ndarray, remap: np.ndarray) -> np.ndarray:
+    """Reorder mimic joint columns from source MJCF order to target MJCF order."""
+    return np.asarray(joint_cols, dtype=np.float64)[:, remap]
+
+
 def convert_one(
     npz_in: Path,
     npz_out: Path,
@@ -179,6 +215,7 @@ def convert_one(
     data_sim,
     body_ids: list[int],
     joint_qpos_indices: list[int],
+    joint_remap: np.ndarray,
     input_fps: float | None,
     output_fps: float,
     skip_existing: bool,
@@ -212,7 +249,7 @@ def convert_one(
     qpos[:, 0:3] = data_rs[:, 0:3]
     q_xyzw = data_rs[:, 3:7]
     qpos[:, 3:7] = q_xyzw[:, [3, 0, 1, 2]]
-    qpos[:, 7:] = data_rs[:, 7:]
+    qpos[:, 7:] = _reorder_mimic_joints(data_rs[:, 7:], joint_remap)
 
     joint_pos = qpos[:, joint_qpos_indices].astype(np.float32)
     joint_vel = _finite_diff(joint_pos, dt).astype(np.float32)
@@ -247,10 +284,16 @@ def convert_one(
     )
 
 
-def _iter_npz_files(input_dir: Path) -> list[Path]:
+def _iter_npz_files(input_dir: Path, exclude_substrings: tuple[str, ...] = ()) -> list[Path]:
     if not input_dir.is_dir():
         raise FileNotFoundError(f"Input directory not found: {input_dir}")
     files = sorted(input_dir.rglob("*.npz"))
+    if exclude_substrings:
+        files = [
+            path
+            for path in files
+            if not any(substr in path.name for substr in exclude_substrings)
+        ]
     if not files:
         raise FileNotFoundError(f"No .npz files under {input_dir}")
     return files
@@ -261,6 +304,17 @@ def _mirror_relative_path(src: Path, input_root: Path, output_root: Path) -> Pat
     return output_root / rel
 
 
+def _default_source_mjcf(repo_root: Path) -> Path | None:
+    candidates = [
+        Path.home() / "Projects/leju_soma_retarget/soma_retargeter/configs/biped_s17/xml/biped_s17_mjcf.xml",
+        repo_root / "external/leju_soma_retarget/soma_retargeter/configs/biped_s17/xml/biped_s17_mjcf.xml",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Convert SOMA mimic NPZ to AMP_mjlab motion NPZ.")
     parser.add_argument("--input-dir", type=Path, required=True)
@@ -269,12 +323,24 @@ def parse_args() -> argparse.Namespace:
         "--mjcf",
         type=Path,
         default=Path("src/assets/robots/biped_s17/xml/biped_s17.xml"),
-        help="MuJoCo model used for FK (default: biped_s17.xml).",
+        help="Target MuJoCo model used for FK (default: AMP_mjlab biped_s17.xml).",
+    )
+    parser.add_argument(
+        "--source-mjcf",
+        type=Path,
+        default=None,
+        help="Source MuJoCo model describing mimic NPZ joint column order (default: SOMA biped_s17_mjcf.xml).",
     )
     parser.add_argument("--input-fps", type=float, default=None, help="Override input fps.")
     parser.add_argument("--output-fps", type=float, default=50.0, help="Output fps (default: 50).")
     parser.add_argument("--skip-existing", action="store_true")
     parser.add_argument("--max-files", type=int, default=-1)
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="Skip files whose name contains this substring (repeatable).",
+    )
     return parser.parse_args()
 
 
@@ -284,25 +350,52 @@ def main() -> int:
     input_dir = args.input_dir.expanduser().resolve()
     output_dir = args.output_dir.expanduser().resolve()
     mjcf_path = args.mjcf if args.mjcf.is_absolute() else (repo_root / args.mjcf).resolve()
+    source_mjcf_path = args.source_mjcf
+    if source_mjcf_path is None:
+        source_mjcf_path = _default_source_mjcf(repo_root)
+    elif not source_mjcf_path.is_absolute():
+        source_mjcf_path = (repo_root / source_mjcf_path).resolve()
+    else:
+        source_mjcf_path = source_mjcf_path.resolve()
 
     if not mjcf_path.is_file():
-        raise SystemExit(f"[ERROR] MJCF not found: {mjcf_path}")
+        raise SystemExit(f"[ERROR] Target MJCF not found: {mjcf_path}")
+    if source_mjcf_path is None or not source_mjcf_path.is_file():
+        raise SystemExit(
+            "[ERROR] Source MJCF not found. Mimic NPZ joint columns follow SOMA "
+            "biped_s17_mjcf.xml order; pass --source-mjcf explicitly."
+        )
 
-    files = _iter_npz_files(input_dir)
+    exclude = tuple(args.exclude)
+    files = _iter_npz_files(input_dir, exclude_substrings=exclude)
     if args.max_files > 0:
         files = files[: args.max_files]
 
     import mujoco
 
     model = _load_mujoco_model(mjcf_path)
+    source_model = _load_mujoco_model(source_mjcf_path)
     data_sim = mujoco.MjData(model)
     body_ids = _collect_body_ids(model)
     joint_qpos_indices = _collect_joint_qpos_indices(model)
+    target_joint_names = _collect_joint_names(model)
+    source_joint_names = _collect_joint_names(source_model)
+    joint_remap = _build_mimic_joint_remap(source_joint_names, target_joint_names)
 
     print(f"[INFO] Input : {input_dir} ({len(files)} files)")
     print(f"[INFO] Output: {output_dir}")
-    print(f"[INFO] MJCF  : {mjcf_path}")
+    print(f"[INFO] Target MJCF : {mjcf_path}")
+    print(f"[INFO] Source MJCF: {source_mjcf_path}")
     print(f"[INFO] Bodies: {len(body_ids)}, actuated joints: {len(joint_qpos_indices)}")
+    if not np.array_equal(joint_remap, np.arange(len(joint_remap))):
+        moved = [
+            f"{source_joint_names[int(joint_remap[i])]} -> {target_joint_names[i]}"
+            for i in range(len(joint_remap))
+            if joint_remap[i] != i
+        ]
+        print(f"[INFO] Joint remap: {len(moved)} columns reordered (mimic/SOMA -> AMP_mjlab)")
+    else:
+        print("[INFO] Joint order: source matches target (no remap needed)")
 
     for src in tqdm(files, desc="Converting mimic NPZ -> AMP NPZ"):
         dst = _mirror_relative_path(src, input_dir, output_dir)
@@ -313,6 +406,7 @@ def main() -> int:
             data_sim=data_sim,
             body_ids=body_ids,
             joint_qpos_indices=joint_qpos_indices,
+            joint_remap=joint_remap,
             input_fps=args.input_fps,
             output_fps=float(args.output_fps),
             skip_existing=bool(args.skip_existing),
