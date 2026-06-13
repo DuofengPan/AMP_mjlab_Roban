@@ -1,13 +1,17 @@
 """Kuavo (biped_s17) actuator model with optional torque-speed limiting.
 
-Motor parameters are sourced only from confirmed project data:
-  - kuavo_v17/kuavo.json  (joint_peak_torque_limits, joint_peak_velocity_limits, MOTORS_TYPE)
-  - biped_s17.xml         (actuatorfrcrange / effort_limit, armature, frictionloss)
+Parameter sources (most conservative wins in simulation):
+  1. Roban 2.2 / Luban 2nd-gen motor spec sheet — Y1 (peak torque), X1 (rated
+     speed / T-N knee), X2 (max joint speed) where confirmed.
+  2. biped_s17.xml / URDF — effort_limit (actuatorfrcrange), armature, friction.
+  3. kuavo_v17/kuavo.json — legacy fallback when (1) and (2) disagree.
 
-Parameters left at defaults when not available in those sources:
-  - X1 (T-N knee speed): unknown — default disables speed-dependent derating
-  - Y2 (reverse peak torque): unknown — defaults to Y1
-  - Fs, Fd (friction): MJCF frictionloss=0.0 — defaults to 0
+Left unchanged when unclear or risky:
+  - Ankle Y1: MJCF/URDF use 74 N·m; motor datasheet lists 37 N·m — keep 74.
+  - Waist effort_limit: MJCF ctrlrange ±50 N·m (motor peak 80 N·m) — keep 50.
+  - Head X1: URDF max speed (5.23 rad/s) < motor rated (9.0 rad/s) — omit X1.
+  - Fs, Fd: MJCF frictionloss=0 — defaults to 0.
+  - Y2 (reverse peak): unknown — defaults to Y1.
 """
 
 from __future__ import annotations
@@ -128,7 +132,7 @@ class KuavoActuatorCfg(BuiltinPositionActuatorCfg):
     """T-N knee speed (rad/s). Default disables speed-dependent derating."""
 
     X2: float = 1e9
-    """No-load speed (rad/s)."""
+    """No-load / max joint speed (rad/s)."""
 
     Y1: float = 0.0
     """Peak torque, same direction as velocity (N·m). 0 falls back to effort_limit."""
@@ -151,69 +155,87 @@ class KuavoActuatorCfg(BuiltinPositionActuatorCfg):
         return KuavoActuator(self, entity, target_ids, target_names)
 
 
-# --- Per-motor configs (kuavo_v17 MOTORS_TYPE + joint_peak_* limits) ---
+# --- Per-motor configs (Roban 2.2 spec + biped_s17 URDF/MJCF) ---
 
 
 @dataclass(kw_only=True)
 class KuavoActuatorCfg_PA81_25(KuavoActuatorCfg):
-    """PA81_25 — leg_l1/l2/l4, leg_r1/r2/r4."""
+    """PA81-25-KV60 — leg_l1/l2/l4, leg_r1/r2/r4 (Roban 2.2 EtherCAT)."""
 
-    Y1: float = 150.9
-    X2: float = 14.62
+    Y1: float = 150.0
+    X1: float = 8.3
+    X2: float = 14.6
     armature: float = 0.003
 
 
 @dataclass(kw_only=True)
 class KuavoActuatorCfg_PA76_25(KuavoActuatorCfg):
-    """PA76_25 — leg_l3, leg_r3 (leg yaw)."""
+    """PA76-25-ZHK — leg_l3, leg_r3 (Roban 2.2 EtherCAT)."""
 
-    Y1: float = 70.4
-    X2: float = 12.93
+    Y1: float = 70.0
+    X1: float = 6.0
+    X2: float = 12.0
     armature: float = 0.003
 
 
 @dataclass(kw_only=True)
 class KuavoActuatorCfg_PA76_25_WAIST(KuavoActuatorCfg):
-    """PA76_25 — waist_yaw_joint."""
+    """PA76-25-ZHK — waist_yaw_joint (Roban 2.2 EtherCAT).
 
-    Y1: float = 80.9
-    X2: float = 12.46
+    Motor peak 80 N·m; simulation effort_limit capped by MJCF ctrlrange (50 N·m).
+    """
+
+    Y1: float = 80.0
+    X1: float = 6.0
+    X2: float = 12.0
     armature: float = 0.003
 
 
 @dataclass(kw_only=True)
 class KuavoActuatorCfg_PA4315_36(KuavoActuatorCfg):
-    """PA4315_36 — leg_l5/l6, leg_r5/r6 (ankle pitch/roll)."""
+    """PA4315-36 — leg_l5/l6, leg_r5/r6 (Roban 2.2 EtherCAT).
 
-    Y1: float = 74.9
-    X2: float = 17.46
+    Y1 follows biped_s17.xml / URDF (74 N·m), not motor datasheet peak (37 N·m).
+    """
+
+    Y1: float = 74.0
+    X1: float = 8.3
+    X2: float = 17.0
     armature: float = 0.003
 
 
 @dataclass(kw_only=True)
 class KuavoActuatorCfg_ruiwoPA60_16(KuavoActuatorCfg):
-    """ruiwoPA60_16 — zarm_l1, zarm_r1."""
+    """PA60-16-ZHK (ruiwo) — zarm_l1, zarm_r1 (Roban 2.2 CAN).
 
-    Y1: float = 14.67
-    X2: float = 10.8
+    Motor peak 16 N·m; simulation effort_limit capped to 14.1 N·m in s17_constants.
+    """
+
+    Y1: float = 16.0
+    X1: float = 9.0
+    X2: float = 10.5
     armature: float = 0.003
 
 
 @dataclass(kw_only=True)
 class KuavoActuatorCfg_ruiwoPA4315_36(KuavoActuatorCfg):
-    """ruiwoPA4315_36 — zarm_l2/l3/l4, zarm_r2/r3/r4."""
+    """PA4315-36 (ruiwo) — zarm_l2/l3/l4, zarm_r2/r3/r4 (Roban 2.2 CAN)."""
 
-    Y1: float = 37.9
+    Y1: float = 37.0
+    X1: float = 9.0
     X2: float = 15.0
     armature: float = 0.003
 
 
 @dataclass(kw_only=True)
 class KuavoActuatorCfg_ruiwoPA4310_25(KuavoActuatorCfg):
-    """ruiwoPA4310_25 — head joints.
+    """PA4310-25 (ruiwo) — head joints (Roban 2.2 CAN).
 
-    No reliable joint_peak_velocity in kuavo_v17 (placeholder 1800); X2 left at default.
-    Set Y1 and effort_limit from biped_s17.xml ctrlrange per joint.
+    X2 uses biped_s17.xml / URDF joint velocity (5.23 rad/s), more conservative
+    than motor no-load speed (10.5 rad/s). Per-joint Y1 and effort_limit set in
+    s17_constants (head_yaw intentionally limited to 1.5 N·m in MJCF).
     """
 
+    Y1: float = 14.1
+    X2: float = 5.23
     armature: float = 0.003

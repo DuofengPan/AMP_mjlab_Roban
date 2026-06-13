@@ -90,7 +90,9 @@ DAMPING_RATIO = 2.0
 STIFFNESS = ARMATURE * NATURAL_FREQ**2
 DAMPING = 2.0 * DAMPING_RATIO * ARMATURE * NATURAL_FREQ
 
-# Effort limits from biped_s17.xml motor ctrlrange.
+# Effort limits from biped_s17.xml motor ctrlrange (simulation hard cap).
+# Waist: motor peak is 80 N·m (Roban 2.2) but MJCF ctrlrange is ±50 — keep 50.
+# Head yaw: MJCF ctrlrange ±1.5 N·m (conservative); pitch ±12 N·m.
 EFFORT_LEG_HIGH = 150.0
 EFFORT_LEG_MID = 70.0
 EFFORT_ANKLE = 74.0

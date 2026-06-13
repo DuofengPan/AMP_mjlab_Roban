@@ -37,6 +37,14 @@ from rsl_rl.modules import (
     # TransformerActorCritic,
 )
 from rsl_rl.utils import store_code_state
+from rsl_rl.training_guard import handle_training_abort
+
+
+def _stability_kwargs(cfg: dict) -> dict:
+    return {
+        "max_value_loss": float(cfg.get("stability_max_value_loss", 1000.0)),
+        "max_abs_return": float(cfg.get("stability_max_abs_return", 5000.0)),
+    }
 
 
 def _migrate_train_cfg(train_cfg: dict) -> None:
@@ -184,11 +192,13 @@ class OnPolicyRunner:
         alg_kwargs = dict(self.alg_cfg, multi_gpu_cfg=self.multi_gpu_cfg)
         if alg_class_name == "PPO" and "min_std" not in alg_kwargs:
             alg_kwargs["min_std"] = _resolve_min_std(self.cfg, self.env.num_actions, self.device)
+        alg_kwargs.update(_stability_kwargs(self.cfg))
         self.alg: PPO | Distillation = alg_class(policy, device=self.device, **alg_kwargs)
 
         # store training configuration
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
+        self.abort_skip_fraction = float(self.cfg.get("stability_abort_skip_fraction", 0.95))
         self.empirical_normalization = self.cfg["empirical_normalization"]
         if self.empirical_normalization:
             self.obs_normalizer = EmpiricalNormalization(shape=[num_obs], until=1.0e8).to(self.device)
@@ -361,6 +371,16 @@ class OnPolicyRunner:
             stop = time.time()
             learn_time = stop - start
             self.current_learning_iteration = it
+            if handle_training_abort(
+                alg=self.alg,
+                loss_dict=loss_dict,
+                iteration=it,
+                log_dir=self.log_dir,
+                abort_skip_fraction=self.abort_skip_fraction,
+            ):
+                if self.log_dir is not None and not self.disable_logs:
+                    self.save(os.path.join(self.log_dir, f"model_{it}.pt"))
+                break
             # log info
             if self.log_dir is not None and not self.disable_logs:
                 # Log information
