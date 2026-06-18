@@ -41,8 +41,6 @@ class PPO:
         self,
         policy,
         min_std=None,
-        max_value_loss=1000.0,
-        max_abs_return=5000.0,
         num_learning_epochs=1,
         num_mini_batches=1,
         clip_param=0.2,
@@ -113,8 +111,6 @@ class PPO:
 
         # PPO components
         self.min_std = min_std
-        self.max_value_loss = float(max_value_loss)
-        self.max_abs_return = float(max_abs_return)
         self.policy = policy
         self.policy.to(self.device)
         # Create optimizer
@@ -227,14 +223,10 @@ class PPO:
         else:
             mean_symmetry_loss = None
         skipped_non_finite_batches = 0
-        skipped_oversized_value_loss = 0
         effective_updates = 0
-        max_value_loss_batch = 0.0
         returns_min = float("inf")
         returns_max = float("-inf")
         returns_abs_max = 0.0
-        training_abort = False
-        training_abort_reason = ""
         total_batches = total_mini_batches(self.num_learning_epochs, self.num_mini_batches)
 
         # generator for mini batches
@@ -293,21 +285,12 @@ class PPO:
 
             if not torch.isfinite(returns_batch).all():
                 skipped_non_finite_batches += 1
-                training_abort = True
-                training_abort_reason = "non-finite returns in mini-batch"
                 continue
 
             return_stats = summarize_returns(returns_batch)
             returns_min = min(returns_min, return_stats["returns_min"])
             returns_max = max(returns_max, return_stats["returns_max"])
             returns_abs_max = max(returns_abs_max, return_stats["returns_abs_max"])
-            if self.max_abs_return > 0.0 and return_stats["returns_abs_max"] > self.max_abs_return:
-                skipped_non_finite_batches += 1
-                training_abort = True
-                training_abort_reason = (
-                    f"returns abs_max={return_stats['returns_abs_max']:.4g} > limit={self.max_abs_return:.4g}"
-                )
-                continue
 
             if not self._policy_std_is_finite():
                 self._clamp_policy_std()
@@ -389,18 +372,6 @@ class PPO:
 
             if not torch.isfinite(value_loss):
                 skipped_non_finite_batches += 1
-                training_abort = True
-                training_abort_reason = "non-finite value_loss"
-                continue
-
-            value_loss_value = float(value_loss.item())
-            max_value_loss_batch = max(max_value_loss_batch, value_loss_value)
-            if self.max_value_loss > 0.0 and value_loss_value > self.max_value_loss:
-                skipped_oversized_value_loss += 1
-                training_abort = True
-                training_abort_reason = (
-                    f"value_loss={value_loss_value:.4g} > limit={self.max_value_loss:.4g}"
-                )
                 continue
 
             vq_loss = getattr(getattr(self.policy, "actor", None), "vq_loss", None)
@@ -469,8 +440,6 @@ class PPO:
 
             if not torch.isfinite(loss):
                 skipped_non_finite_batches += 1
-                training_abort = True
-                training_abort_reason = "non-finite total loss"
                 continue
 
             # Compute the gradients
@@ -530,14 +499,6 @@ class PPO:
             returns_max = float("nan")
             returns_abs_max = float("nan")
 
-        if (
-            not training_abort
-            and total_batches > 0
-            and skipped_non_finite_batches + skipped_oversized_value_loss >= total_batches
-        ):
-            training_abort = True
-            training_abort_reason = f"all {total_batches} mini-batches skipped"
-
         # construct the loss dictionary
         loss_dict = {
             "value_function": mean_value_loss,
@@ -546,15 +507,9 @@ class PPO:
             "vq": mean_vq_loss,
             "recon": mean_recon_loss,
             "skipped_non_finite_batches": float(skipped_non_finite_batches),
-            "skipped_oversized_value_loss": float(skipped_oversized_value_loss),
-            "max_value_loss_batch": float(max_value_loss_batch),
             "returns_min": float(returns_min),
             "returns_max": float(returns_max),
             "returns_abs_max": float(returns_abs_max),
-            "stability_max_value_loss": float(self.max_value_loss),
-            "stability_max_abs_return": float(self.max_abs_return),
-            "training_abort": bool(training_abort),
-            "training_abort_reason": training_abort_reason,
         }
         if self.rnd:
             loss_dict["rnd"] = mean_rnd_loss

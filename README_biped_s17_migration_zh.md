@@ -16,34 +16,38 @@
 
 当前进度：
 
-| 模块 | 状态 | 路径/说明 |
-|------|------|-----------|
-| 机器人 MJCF + mesh | ✅ 已就绪 | `src/assets/robots/biped_s17/` |
-| AMP 格式 motion NPZ | ✅ 已就绪（16 条） | `src/assets/motions/s17/amp/` |
-| mimic → AMP 转换脚本 | ✅ 已就绪 | `scripts/mimic_npz_to_amp_npz.py` |
-| MJCF 传感器 / foot site | ✅ 已就绪 | `biped_s17.xml`（§5.2） |
-| `s17_constants.py` + `kuavo_actuators.py` | ✅ 已就绪 | §5.1、§5.5 |
-| AMP 任务注册与配置 | ✅ 已就绪 | `src/tasks/amp_loco/config/biped_s17/` |
-| Flat 训练验证 | 🔄 进行中 | `Biped-S17-AMP-Flat` |
-| wbc_fsm 部署映射 | ⏳ 待完成 | obs/action 维度与关节顺序 |
+
+| 模块                                        | 状态          | 路径/说明                                  |
+| ----------------------------------------- | ----------- | -------------------------------------- |
+| 机器人 MJCF + mesh                           | ✅ 已就绪       | `src/assets/robots/biped_s17/`         |
+| AMP 格式 motion NPZ                         | ✅ 已就绪（16 条） | `src/assets/motions/s17/amp/`          |
+| mimic → AMP 转换脚本                          | ✅ 已就绪       | `scripts/mimic_npz_to_amp_npz.py`      |
+| MJCF 传感器 / foot site                      | ✅ 已就绪       | `biped_s17.xml`（§5.2）                  |
+| `s17_constants.py` + `kuavo_actuators.py` | ✅ 已就绪       | §5.1、§5.5                              |
+| AMP 任务注册与配置                               | ✅ 已就绪       | `src/tasks/amp_loco/config/biped_s17/` |
+| Flat 训练验证                                 | 🔄 进行中      | `Biped-S17-AMP-Flat`                   |
+| wbc_fsm 部署映射                              | ⏳ 待完成       | obs/action 维度与关节顺序                     |
+
 
 ---
 
 ## 2. G1 与 biped_s17 关键差异
 
-| 项目 | G1 | biped_s17 |
-|------|-----|-----------|
-| 可控 DOF | 29 | **23**（不含头则 21，当前 XML 含头 2 DOF） |
-| 腰 | yaw / roll / pitch | **仅 waist_yaw** |
-| 臂 | 7×2（含腕） | **4×2** |
-| Root link | `pelvis` | `base_link`（free joint） |
-| AMP anchor | `torso_link` | `torso` |
-| IMU site | pelvis，`imu_ang_vel` | torso 上 `imu`（已对齐 mjlab 命名） |
-| Foot site | `left_foot` / `right_foot` | `leg_l6/r6_link` 上已添加 |
-| 执行器模型 | `UnitreeActuatorCfg` | `KuavoActuatorCfg_*`（kuavo.json） |
-| 任务 ID | `Unitree-G1-AMP-Flat` | `Biped-S17-AMP-Flat` |
-| NPZ bodies | 30 | **24** |
-| NPZ joint 维 | 29 | **23** |
+
+| 项目          | G1                         | biped_s17                        |
+| ----------- | -------------------------- | -------------------------------- |
+| 可控 DOF      | 29                         | **23**（不含头则 21，当前 XML 含头 2 DOF）  |
+| 腰           | yaw / roll / pitch         | **仅 waist_yaw**                  |
+| 臂           | 7×2（含腕）                    | **4×2**                          |
+| Root link   | `pelvis`                   | `base_link`（free joint）          |
+| AMP anchor  | `torso_link`               | `torso`                          |
+| IMU site    | pelvis，`imu_ang_vel`       | torso 上 `imu`（已对齐 mjlab 命名）      |
+| Foot site   | `left_foot` / `right_foot` | `leg_l6/r6_link` 上已添加            |
+| 执行器模型       | `UnitreeActuatorCfg`       | `KuavoActuatorCfg_`*（kuavo.json） |
+| 任务 ID       | `Unitree-G1-AMP-Flat`      | `Biped-S17-AMP-Flat`             |
+| NPZ bodies  | 30                         | **24**                           |
+| NPZ joint 维 | 29                         | **23**                           |
+
 
 **不能直接复用 G1 的 NPZ、policy 或任务配置**，必须按 s17 维度和命名重新配置。
 
@@ -80,10 +84,12 @@ mimic NPZ  (keys: data, fps)                  scripts/mimic_npz_to_amp_npz.py
 
 ### 3.1 两种 NPZ 格式（重要）
 
-| 来源 | Keys | 能否直接给 AMP 训练 |
-|------|------|---------------------|
-| SOMA `bvh_to_npz_converter.py` | `data`, `fps` | **否**（mimic 中间格式） |
-| AMP `csv_to_npz.py` / `mimic_npz_to_amp_npz.py` | `fps`, `joint_pos`, `joint_vel`, `body_*` | **是** |
+
+| 来源                                              | Keys                                      | 能否直接给 AMP 训练      |
+| ----------------------------------------------- | ----------------------------------------- | ----------------- |
+| SOMA `bvh_to_npz_converter.py`                  | `data`, `fps`                             | **否**（mimic 中间格式） |
+| AMP `csv_to_npz.py` / `mimic_npz_to_amp_npz.py` | `fps`, `joint_pos`, `joint_vel`, `body_`* | **是**             |
+
 
 SOMA 的 `data` 布局：`(T, nq)` = `[root_pos(3), root_quat(xyzw)(4), joint_pos(ndof)]`。
 
@@ -144,6 +150,8 @@ cd /path/to/AMP_mjlab
   --input-fps 30 \
   --output-fps 50 \
   --mjcf src/assets/robots/biped_s17/xml/biped_s17.xml
+
+/home/lzl/miniforge3/envs/soma/bin/python scripts/mimic_npz_to_amp_npz.py   --input-dir /home/lzl/Projects/leju_soma_retarget/outputs/roban/lafan1/amp   --output-dir src/assets/motions/s17/amp/   --input-fps 30   --output-fps 50   --mjcf src/assets/robots/biped_s17/xml/biped_s17.xml
 ```
 
 输出目录结构（与 G1 一致）：
@@ -188,14 +196,16 @@ Delayed Termination / Recovery       motions/s17/amp/*.npz
 
 路径：`src/assets/robots/biped_s17/s17_constants.py`
 
-| 项 | 实现 |
-|----|------|
-| `get_spec()` | 加载 `biped_s17.xml` + mesh；删除 XML 原生 `<motor>`；自动命名碰撞 geom（`left_foot*_collision` 等） |
-| 初始姿态 | `KNEES_BENT_KEYFRAME`，z=0.95（参考 G1 弯膝，关节名映射到 s17） |
-| 执行器 | `KuavoActuatorCfg_*`（见 §5.5），8 组共 **23 DOF** |
-| PD 增益 | 与 G1 相同公式：`stiffness = armature × (10 Hz × 2π)²`，`armature=0.003` |
-| `S17_ACTION_SCALE` | `0.25 × effort / stiffness`，写入 `joint_pos` action |
-| 导出 | `src/assets/robots/__init__.py` → `get_biped_s17_robot_cfg` / `S17_ACTION_SCALE` |
+
+| 项                  | 实现                                                                                  |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| `get_spec()`       | 加载 `biped_s17.xml` + mesh；删除 XML 原生 `<motor>`；自动命名碰撞 geom（`left_foot*_collision` 等） |
+| 初始姿态               | `KNEES_BENT_KEYFRAME`，z=0.95（参考 G1 弯膝，关节名映射到 s17）                                   |
+| 执行器                | `KuavoActuatorCfg_*`（见 §5.5），8 组共 **23 DOF**                                        |
+| PD 增益              | 与 G1 相同公式：`stiffness = armature × (10 Hz × 2π)²`，`armature=0.003`                   |
+| `S17_ACTION_SCALE` | `0.25 × effort / stiffness`，写入 `joint_pos` action                                   |
+| 导出                 | `src/assets/robots/__init__.py` → `get_biped_s17_robot_cfg` / `S17_ACTION_SCALE`    |
+
 
 ### 5.2 MJCF 修改（`biped_s17.xml`）
 
@@ -222,11 +232,13 @@ Foot 相关 reward / 摩擦随机化需要 foot site，已在 `leg_l6_link` / `l
 
 ### 5.3 AMP 任务配置（`config/biped_s17/`）
 
-| 文件 | 作用 |
-|------|------|
+
+| 文件            | 作用                                                     |
+| ------------- | ------------------------------------------------------ |
 | `env_cfgs.py` | 机器人 entity、body/foot/contact 映射、motion 路径、action scale |
-| `rl_cfg.py` | AMP 判别器 body 映射、`min_normalized_std`（23 维）、motion 目录 |
-| `__init__.py` | 注册 `Biped-S17-AMP-Flat` / `Biped-S17-AMP-Rough` |
+| `rl_cfg.py`   | AMP 判别器 body 映射、`min_normalized_std`（23 维）、motion 目录   |
+| `__init__.py` | 注册 `Biped-S17-AMP-Flat` / `Biped-S17-AMP-Rough`        |
+
 
 **AMP body 映射（11 个，与 G1 思路一致）：**
 
@@ -244,19 +256,21 @@ root:   base_link
 
 在 `make_amp_env_cfg()` 基础上覆写，reward 权重、push 扰动、delayed reset 等与 G1 **相同**。
 
-| 用途 | G1 | S17 |
-|------|----|-----|
-| 机器人 Entity | `get_g1_robot_cfg()` | `get_biped_s17_robot_cfg()` |
-| 根 body（角速度惩罚等） | `pelvis` | `base_link` |
-| Anchor（速度跟踪、AMP 相对坐标） | `torso_link` | `torso` |
-| 地形扫描 frame | `pelvis` | `base_link` |
-| 足地接触 subtree | `*_ankle_roll_link` | `leg_l6_link` / `leg_r6_link` |
-| 自碰撞 subtree | `pelvis` | `base_link` |
-| 足摩擦 geom | `left_foot1~7_collision` | `left_foot1~9_collision` |
-| COM 随机化 body | `torso_link` | `torso` |
-| WalkandRun motion | `motions/g1/amp/WalkandRun` | `motions/s17/amp/WalkandRun` |
-| Recovery motion | `motions/g1/amp/Recovery` | `motions/s17/amp/Recovery` |
-| Action 维 / joint obs 维 | 29 | **23**（由 entity 自动推断） |
+
+| 用途                     | G1                          | S17                           |
+| ---------------------- | --------------------------- | ----------------------------- |
+| 机器人 Entity             | `get_g1_robot_cfg()`        | `get_biped_s17_robot_cfg()`   |
+| 根 body（角速度惩罚等）         | `pelvis`                    | `base_link`                   |
+| Anchor（速度跟踪、AMP 相对坐标）  | `torso_link`                | `torso`                       |
+| 地形扫描 frame             | `pelvis`                    | `base_link`                   |
+| 足地接触 subtree           | `*_ankle_roll_link`         | `leg_l6_link` / `leg_r6_link` |
+| 自碰撞 subtree            | `pelvis`                    | `base_link`                   |
+| 足摩擦 geom               | `left_foot1~7_collision`    | `left_foot1~9_collision`      |
+| COM 随机化 body           | `torso_link`                | `torso`                       |
+| WalkandRun motion      | `motions/g1/amp/WalkandRun` | `motions/s17/amp/WalkandRun`  |
+| Recovery motion        | `motions/g1/amp/Recovery`   | `motions/s17/amp/Recovery`    |
+| Action 维 / joint obs 维 | 29                          | **23**（由 entity 自动推断）         |
+
 
 Critic / AMP 观测组的 `body_pos_b`、`body_ori_b`、`body_lin_vel_b`、`body_ang_vel_b` 均使用上表 anchor + 11 body 列表。
 
@@ -269,15 +283,17 @@ Critic / AMP 观测组的 `body_pos_b`、`body_ori_b`、`body_lin_vel_b`、`body
 - `kuavo-ros-control` → `kuavo_v17/kuavo.json`（`MOTORS_TYPE`、`joint_peak_torque_limits`、`joint_peak_velocity_limits`）
 - `biped_s17.xml`（`actuatorfrcrange` / motor `ctrlrange` 作为 `effort_limit`）
 
-| 电机型号 | 关节 |
-|----------|------|
-| `PA81_25` | leg_l1/l2/l4, leg_r1/r2/r4 |
-| `PA76_25` | leg_l3/r3 |
-| `PA76_25_WAIST` | waist_yaw |
-| `PA4315_36` | leg_l5/l6, leg_r5/r6 |
-| `ruiwoPA60_16` | zarm_l1/r1 |
-| `ruiwoPA4315_36` | zarm_l2~l4, zarm_r2~r4 |
+
+| 电机型号             | 关节                                        |
+| ---------------- | ----------------------------------------- |
+| `PA81_25`        | leg_l1/l2/l4, leg_r1/r2/r4                |
+| `PA76_25`        | leg_l3/r3                                 |
+| `PA76_25_WAIST`  | waist_yaw                                 |
+| `PA4315_36`      | leg_l5/l6, leg_r5/r6                      |
+| `ruiwoPA60_16`   | zarm_l1/r1                                |
+| `ruiwoPA4315_36` | zarm_l2~~l4, zarm_r2~~r4                  |
 | `ruiwoPA4310_25` | zhead_1/2（Y1 取自 joint `actuatorfrcrange`） |
+
 
 **注意：** 当前 `X1`（满扭拐点速度）未标定，默认为 `1e9`，T-N 降扭实际上未生效；等价于恒定扭矩上限 `min(Y1, effort_limit)`。后续可从电机手册补 `X1` 或采用 `X1 ≈ 0.7×X2` 启发式。
 
@@ -285,13 +301,15 @@ Critic / AMP 观测组的 `body_pos_b`、`body_ori_b`、`body_lin_vel_b`、`body
 
 PPO / AMP 网络结构与超参与 G1 **完全一致**（512-256-128、lr=1e-3、`amp_reward_coef=0.1` 等），仅改机器人相关字段：
 
-| 参数 | G1 | S17 |
-|------|----|-----|
-| `experiment_name` | `g1_amp_locomotion` | `s17_amp_locomotion` |
-| `amp_motion_files` | `motions/g1/amp` | `motions/s17/amp` |
-| `min_normalized_std` | 29 × 0.05 | **23 × 0.05** |
-| `amp_anchor_name` | `torso_link` | `torso` |
-| `amp_body_names` | G1 连杆名 | s17 连杆名（§5.3） |
+
+| 参数                   | G1                  | S17                  |
+| -------------------- | ------------------- | -------------------- |
+| `experiment_name`    | `g1_amp_locomotion` | `s17_amp_locomotion` |
+| `amp_motion_files`   | `motions/g1/amp`    | `motions/s17/amp`    |
+| `min_normalized_std` | 29 × 0.05           | **23 × 0.05**        |
+| `amp_anchor_name`    | `torso_link`        | `torso`              |
+| `amp_body_names`     | G1 连杆名              | s17 连杆名（§5.3）        |
+
 
 `AMPLoader` 启动时递归加载 `s17/amp/` 下全部 NPZ，按 `amp_body_names` + `amp_anchor_name` 计算 style 特征；`num_actions` 从 env 读取（23），自动对齐策略维度。**未修改** `amp_ppo.py`、discriminator 结构或 `amp_task_reward_lerp`。
 
@@ -365,14 +383,16 @@ python scripts/play.py Biped-S17-AMP-Flat \
 
 训练导出的 ONNX 含 obs normalizer，但部署端仍需对齐：
 
-| 项目 | 说明 |
-|------|------|
-| obs 维度 | 由 23 关节 + IMU + command 等决定，与 G1（29 关节）不同 |
-| action 维度 | **23**（当前含头 2 DOF；若锁头需同步改 constants 与 motion） |
-| 关节顺序 | 与 `biped_s17.xml` 中 actuated joint 顺序一致，sim ↔ 真机需 mapping |
-| IMU 帧 | s17 IMU 在 **torso**（G1 在 pelvis），部署语义不同 |
-| `ACTION_SCALE` | 来自 `s17_constants.py` 的 `S17_ACTION_SCALE` |
-| AMP style body | 11 个 link，anchor=`torso`（见 §5.3） |
+
+| 项目             | 说明                                                        |
+| -------------- | --------------------------------------------------------- |
+| obs 维度         | 由 23 关节 + IMU + command 等决定，与 G1（29 关节）不同                 |
+| action 维度      | **23**（当前含头 2 DOF；若锁头需同步改 constants 与 motion）             |
+| 关节顺序           | 与 `biped_s17.xml` 中 actuated joint 顺序一致，sim ↔ 真机需 mapping |
+| IMU 帧          | s17 IMU 在 **torso**（G1 在 pelvis），部署语义不同                   |
+| `ACTION_SCALE` | 来自 `s17_constants.py` 的 `S17_ACTION_SCALE`                |
+| AMP style body | 11 个 link，anchor=`torso`（见 §5.3）                          |
+
 
 部署代码仓库：[ccrpRepo/wbc_fsm](https://github.com/ccrpRepo/wbc_fsm)（`MJAmp State`）。
 
