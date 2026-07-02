@@ -12,7 +12,6 @@ from src.assets.robots.biped_s17.kuavo_actuators import (
     KuavoActuatorCfg_PA76_25,
     KuavoActuatorCfg_PA76_25_WAIST,
     KuavoActuatorCfg_PA81_25,
-    KuavoActuatorCfg_ruiwoPA4310_25,
     KuavoActuatorCfg_ruiwoPA4315_36,
     KuavoActuatorCfg_ruiwoPA60_16,
 )
@@ -99,8 +98,8 @@ EFFORT_ANKLE = 74.0
 EFFORT_WAIST = 50.0
 EFFORT_ARM = 37.0
 EFFORT_ARM_SHOULDER = 14.1
-EFFORT_HEAD_YAW = 1.5
-EFFORT_HEAD_PITCH = 12.0
+
+S17_HEAD_JOINT_NAMES = ("zhead_1_joint", "zhead_2_joint")
 
 S17_ACTUATOR_LEG_HIGH = KuavoActuatorCfg_PA81_25(
   target_names_expr=(
@@ -163,22 +162,6 @@ S17_ACTUATOR_ARM_SHOULDER = KuavoActuatorCfg_ruiwoPA60_16(
   effort_limit=EFFORT_ARM_SHOULDER,
   armature=ARMATURE,
 )
-S17_ACTUATOR_HEAD_YAW = KuavoActuatorCfg_ruiwoPA4310_25(
-  target_names_expr=("zhead_1_joint",),
-  stiffness=STIFFNESS,
-  damping=DAMPING,
-  effort_limit=EFFORT_HEAD_YAW,
-  Y1=EFFORT_HEAD_YAW,
-  armature=ARMATURE,
-)
-S17_ACTUATOR_HEAD_PITCH = KuavoActuatorCfg_ruiwoPA4310_25(
-  target_names_expr=("zhead_2_joint",),
-  stiffness=STIFFNESS,
-  damping=DAMPING,
-  effort_limit=EFFORT_HEAD_PITCH,
-  Y1=EFFORT_HEAD_PITCH,
-  armature=ARMATURE,
-)
 
 ##
 # Keyframe config.
@@ -232,11 +215,17 @@ S17_ARTICULATION = EntityArticulationInfoCfg(
     S17_ACTUATOR_WAIST,
     S17_ACTUATOR_ARM,
     S17_ACTUATOR_ARM_SHOULDER,
-    S17_ACTUATOR_HEAD_YAW,
-    S17_ACTUATOR_HEAD_PITCH,
   ),
   soft_joint_pos_limit_factor=0.9,
 )
+
+S17_NUM_ACTIONS = 21
+S17_ACTUATED_JOINT_NAMES: tuple[str, ...] = tuple(
+  name
+  for actuator in S17_ARTICULATION.actuators
+  for name in actuator.target_names_expr
+)
+assert len(S17_ACTUATED_JOINT_NAMES) == S17_NUM_ACTIONS
 
 
 def get_biped_s17_robot_cfg() -> EntityCfg:

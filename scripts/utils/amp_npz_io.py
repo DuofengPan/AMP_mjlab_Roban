@@ -21,7 +21,7 @@ REQUIRED_KEYS = (
 
 DEFAULT_MJCF = Path("src/assets/robots/biped_s17/xml/biped_s17.xml")
 DEFAULT_VIS_MJCF = Path("src/assets/robots/biped_s17/xml/scene.xml")
-DEFAULT_MOTION_ROOT = Path("src/assets/motions/s17/amp")
+DEFAULT_MOTION_ROOT = Path("src/assets/motions/s17/amp/loco")
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,7 @@ ROBOT_PROFILES: dict[str, RobotProfile] = {
         name="s17",
         mjcf=Path("src/assets/robots/biped_s17/xml/biped_s17.xml"),
         vis_mjcf=Path("src/assets/robots/biped_s17/xml/scene.xml"),
-        motion_root=Path("src/assets/motions/s17/amp"),
+        motion_root=Path("src/assets/motions/s17/amp/loco"),
         base_body="base_link",
         foot_left_body="leg_l6_link",
         foot_right_body="leg_r6_link",

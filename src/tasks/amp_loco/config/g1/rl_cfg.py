@@ -68,7 +68,7 @@ def g1_amp_ppo_runner_cfg() -> RslRlAmpRunnerCfg:
     logger="tensorboard",
     save_interval=100,
     num_steps_per_env=24,
-    max_iterations=100001,
+    max_iterations=50000,
     # AMP parameters
     amp_reward_coef=0.1,
     amp_motion_files=os.path.normpath(_MOTION_DATA_DIR),

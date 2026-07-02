@@ -14,7 +14,7 @@ This script resamples to the target fps, runs MuJoCo FK, and writes the AMP layo
 Example:
   python scripts/mimic_npz_to_amp_npz.py \\
     --input-dir  /path/to/mimic_npz/WalkandRun \\
-    --output-dir src/assets/motions/s17/amp/WalkandRun \\
+    --output-dir src/assets/motions/s17/amp/loco/WalkandRun \\
     --input-fps 30 --output-fps 50
 """
 

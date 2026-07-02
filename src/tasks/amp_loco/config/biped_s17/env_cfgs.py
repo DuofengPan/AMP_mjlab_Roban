@@ -1,20 +1,34 @@
 """Kuavo biped_s17 AMP locomotion environment configurations."""
 
-import os
-
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg
 from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
+from src.assets.motions.s17.paths import (
+  FLATWALK_MOTION_ROOT_STR,
+  LOCO_RECOVERY_DIR_STR,
+  LOCO_WALK_AND_RUN_DIR_STR,
+)
 from src.assets.robots.biped_s17.s17_constants import (
   S17_ACTION_SCALE,
+  S17_ACTUATED_JOINT_NAMES,
   get_biped_s17_robot_cfg,
 )
 from src.tasks.amp_loco.amp_env_cfg import make_amp_env_cfg
+
+
+def _apply_s17_no_head_joint_obs(cfg: ManagerBasedRlEnvCfg) -> None:
+  """Use actuated joints only (21 DOF) in actor/critic joint observations."""
+  joint_cfg = SceneEntityCfg("robot", joint_names=S17_ACTUATED_JOINT_NAMES)
+  for group_name in ("actor", "critic"):
+    group = cfg.observations[group_name]
+    group.terms["joint_pos"].params["asset_cfg"] = joint_cfg
+    group.terms["joint_vel"].params["asset_cfg"] = joint_cfg
 
 
 def biped_s17_amp_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
@@ -100,15 +114,9 @@ def biped_s17_amp_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.events["init_motion_loader"].params["delay_reset_env_ratio"] = 0.4
   cfg.events["init_motion_loader"].params["max_delay_steps"] = 250
 
-  _motion_base = os.path.join(
-    os.path.dirname(__file__), "..", "..", "..", "..", "assets", "motions", "s17", "amp"
-  )
-  _motion_dir = os.path.abspath(os.path.join(_motion_base, "WalkandRun"))
-  _recovery_dir = os.path.abspath(os.path.join(_motion_base, "Recovery"))
-
-  cfg.events["init_motion_loader"].params["motion_dir"] = _motion_dir
-  cfg.events["init_motion_loader"].params["recovery_dir"] = _recovery_dir
-  cfg.events["reset_from_motion"].params["motion_dir"] = _motion_dir
+  cfg.events["init_motion_loader"].params["motion_dir"] = LOCO_WALK_AND_RUN_DIR_STR
+  cfg.events["init_motion_loader"].params["recovery_dir"] = LOCO_RECOVERY_DIR_STR
+  cfg.events["reset_from_motion"].params["motion_dir"] = LOCO_WALK_AND_RUN_DIR_STR
 
   cfg.rewards["track_anchor_linear_velocity"].params["anchor_cfg"].body_names = (
     anchor_name,
@@ -173,6 +181,33 @@ def biped_s17_amp_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
       params={},
     )
     cfg.events["init_motion_loader"].params["delay_reset_env_ratio"] = 1.0
+
+  _apply_s17_no_head_joint_obs(cfg)
+
+  return cfg
+
+
+def biped_s17_amp_flatwalk_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Create biped_s17 flat terrain AMP configuration using amp_gait motion library."""
+  cfg = biped_s17_amp_flat_env_cfg(play=play)
+
+  cfg.events["init_motion_loader"].params["motion_dir"] = FLATWALK_MOTION_ROOT_STR
+  cfg.events["init_motion_loader"].params["recovery_dir"] = None
+  cfg.events["init_motion_loader"].params["delay_reset_env_ratio"] = 0.0
+  cfg.events["init_motion_loader"].params["max_delay_steps"] = 0
+  cfg.events["reset_from_motion"].params["motion_dir"] = FLATWALK_MOTION_ROOT_STR
+
+  twist_cmd = cfg.commands["twist"]
+  assert isinstance(twist_cmd, UniformVelocityCommandCfg)
+  twist_cmd.ranges.lin_vel_x = (-0.6, 1.2)
+  twist_cmd.ranges.lin_vel_y = (-0.5, 0.5)
+  twist_cmd.ranges.ang_vel_z = (-0.6, 0.6)
+
+  if play:
+    twist_cmd.ranges.lin_vel_x = (-0.5, 0.5)
+    twist_cmd.ranges.lin_vel_y = (-0.25, 0.25)
+    twist_cmd.ranges.ang_vel_z = (-2.5, 2.5)
+    cfg.events["init_motion_loader"].params["delay_reset_env_ratio"] = 0.0
 
   return cfg
 
