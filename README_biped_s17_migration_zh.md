@@ -20,12 +20,15 @@
 | 模块                                        | 状态          | 路径/说明                                  |
 | ----------------------------------------- | ----------- | -------------------------------------- |
 | 机器人 MJCF + mesh                           | ✅ 已就绪       | `src/assets/robots/biped_s17/`         |
-| AMP 格式 motion NPZ                         | ✅ 已就绪（16 条） | `src/assets/motions/s17/amp/`          |
+| AMP 格式 motion NPZ（loco）                   | ✅ 已就绪（16 条） | `src/assets/motions/s17/amp/loco/`     |
+| AMP 格式 motion NPZ（FlatWalk / amp_gait）    | ✅ 已就绪（30 条） | `src/assets/motions/s17/amp/FlatWalk/` |
 | mimic → AMP 转换脚本                          | ✅ 已就绪       | `scripts/mimic_npz_to_amp_npz.py`      |
+| retarget gait → AMP 转换脚本                  | ✅ 已就绪       | `scripts/retarget_npz_to_amp_npz.py`   |
+| motion 校验 / 可视化工具                         | ✅ 已就绪       | `scripts/utils/validate_amp_motions.py` 等 |
 | MJCF 传感器 / foot site                      | ✅ 已就绪       | `biped_s17.xml`（§5.2）                  |
-| `s17_constants.py` + `kuavo_actuators.py` | ✅ 已就绪       | §5.1、§5.5                              |
+| `s17_constants.py` + `kuavo_actuators.py` | ✅ 已就绪       | §5.1、§5.5（**21 DOF action，头部 fixed**） |
 | AMP 任务注册与配置                               | ✅ 已就绪       | `src/tasks/amp_loco/config/biped_s17/` |
-| Flat 训练验证                                 | 🔄 进行中      | `Biped-S17-AMP-Flat`                   |
+| Flat / FlatWalk 训练验证                      | 🔄 进行中      | `Biped-S17-AMP-Flat`、`Biped-S17-AMP-FlatWalk` |
 | wbc_fsm 部署映射                              | ⏳ 待完成       | obs/action 维度与关节顺序                     |
 
 
@@ -36,7 +39,9 @@
 
 | 项目          | G1                         | biped_s17                        |
 | ----------- | -------------------------- | -------------------------------- |
-| 可控 DOF      | 29                         | **23**（不含头则 21，当前 XML 含头 2 DOF）  |
+| 可控 DOF（policy action） | 29                         | **21**（头 2 DOF 在 MJCF 中 **fixed**，不参与控制） |
+| 仿真 hinge DOF | 29                         | **21**（`get_spec()` 删除 `zhead_*` hinge） |
+| NPZ `joint_pos` 列数 | 29                         | **23**（legacy，末 2 列为 head=0；加载时自动 strip 为 21） |
 | 腰           | yaw / roll / pitch         | **仅 waist_yaw**                  |
 | 臂           | 7×2（含腕）                    | **4×2**                          |
 | Root link   | `pelvis`                   | `base_link`（free joint）          |
@@ -44,9 +49,8 @@
 | IMU site    | pelvis，`imu_ang_vel`       | torso 上 `imu`（已对齐 mjlab 命名）      |
 | Foot site   | `left_foot` / `right_foot` | `leg_l6/r6_link` 上已添加            |
 | 执行器模型       | `UnitreeActuatorCfg`       | `KuavoActuatorCfg_`*（kuavo.json） |
-| 任务 ID       | `Unitree-G1-AMP-Flat`      | `Biped-S17-AMP-Flat`             |
+| 任务 ID（示例）   | `Unitree-G1-AMP-Flat`      | `Biped-S17-AMP-Flat` / `FlatWalk` / `Rough` |
 | NPZ bodies  | 30                         | **24**                           |
-| NPZ joint 维 | 29                         | **23**                           |
 
 
 **不能直接复用 G1 的 NPZ、policy 或任务配置**，必须按 s17 维度和命名重新配置。
@@ -70,13 +74,14 @@ mimic NPZ  (keys: data, fps)                  scripts/mimic_npz_to_amp_npz.py
     │ ───────────────────────────────────────►
     ▼                                          AMP NPZ (joint/body + fps)
                                                src/assets/motions/s17/amp/
+                                                 loco/ 或 FlatWalk/
                                                     │
                                                     ▼
                                                s17_constants.py + kuavo_actuators.py
                                                config/biped_s17/（env + rl）
                                                     │
                                                     ▼
-                                               train.py（Biped-S17-AMP-Flat）
+                                               train.py（Flat / Rough / FlatWalk）
                                                     │
                                                     ▼
                                                ONNX → wbc_fsm 部署
@@ -146,20 +151,70 @@ cd /path/to/AMP_mjlab
 
 /home/lzl/miniforge3/envs/soma/bin/python scripts/mimic_npz_to_amp_npz.py \
   --input-dir  /path/to/leju_soma_retarget/outputs/biped_s17/lafan1_soma_clips_mimic_npz \
-  --output-dir src/assets/motions/s17/amp \
+  --output-dir src/assets/motions/s17/amp/loco \
   --input-fps 30 \
   --output-fps 50 \
   --mjcf src/assets/robots/biped_s17/xml/biped_s17.xml
-
-/home/lzl/miniforge3/envs/soma/bin/python scripts/mimic_npz_to_amp_npz.py   --input-dir /home/lzl/Projects/leju_soma_retarget/outputs/roban/lafan1/amp   --output-dir src/assets/motions/s17/amp/   --input-fps 30   --output-fps 50   --mjcf src/assets/robots/biped_s17/xml/biped_s17.xml
 ```
 
-输出目录结构（与 G1 一致）：
+输出目录结构（**loco 与 FlatWalk 分离，避免判别器混用**）：
 
 ```text
-src/assets/motions/s17/amp/
-  WalkandRun/    # 12 条
-  Recovery/      # 4 条
+src/assets/motions/s17/
+  paths.py                    # 各任务 motion 根路径常量
+  amp/
+    loco/                     # Rough + Flat 任务共用
+      WalkandRun/             # 12 条（LAFAN SOMA）
+      Recovery/               # 4 条
+    FlatWalk/                 # FlatWalk 任务专用（amp_gait retarget，30 条）
+```
+
+路径常量见 `src/assets/motions/s17/paths.py`：
+
+| 常量 | 用途 |
+|------|------|
+| `LOCO_MOTION_ROOT` | Rough / Flat：env reset + AMP 判别器（递归 `loco/`） |
+| `LOCO_WALK_AND_RUN_DIR` | Rough / Flat：reset 采样 WalkandRun |
+| `LOCO_RECOVERY_DIR` | Rough / Flat：recovery 子集 |
+| `FLATWALK_MOTION_ROOT` | FlatWalk：env reset + AMP 判别器（仅 `FlatWalk/`） |
+
+### 4.3.1 amp_gait retarget → AMP NPZ（FlatWalk 专用）
+
+若 motion 来自 Roban gait retarget（`*_retarget.npz`，含 `dof_names` / `dof_positions` 等），使用：
+
+```bash
+cd /path/to/AMP_mjlab
+conda activate amp   # 或 soma
+
+python scripts/retarget_npz_to_amp_npz.py \
+  --input-dir  src/assets/motions/s17/amp_gait-original \
+  --output-dir src/assets/motions/s17/amp/FlatWalk \
+  --mjcf src/assets/robots/biped_s17/xml/biped_s17.xml
+```
+
+转换时 head 关节写入 0；输出 schema 与 §4.3 相同（`joint_pos` 仍为 **23 列**，末 2 列为 head）。
+
+批量校验：
+
+```bash
+python scripts/utils/validate_amp_motions.py \
+  --robot s17 \
+  --motion-root src/assets/motions/s17/amp/FlatWalk \
+  --fail-on-issues
+
+python scripts/utils/validate_amp_motions.py \
+  --robot s17 \
+  --motion-root src/assets/motions/s17/amp/loco \
+  --fail-on-issues
+```
+
+单条 motion 可视化（MuJoCo mesh 回放）：
+
+```bash
+python scripts/utils/visualize_amp_npz.py \
+  --robot s17 \
+  --npz src/assets/motions/s17/amp/FlatWalk/直行_低速_小摆手_Skeleton_segment_000_f0-1271_retarget.npz \
+  --mujoco-robot --loop --root-frame center
 ```
 
 当前 AMP NPZ 规格：
@@ -171,10 +226,11 @@ src/assets/motions/s17/amp/
 
 ### 4.4 新增/扩充 motion 的检查清单
 
-1. 在 `cut_bvh_clips.py` 增加 `CLIP_JOBS` 条目
-2. 重新跑 §4.2、§4.3
-3. 目视或脚本检查：根高度、关节范围、无明显穿透
-4. 确认 `WalkandRun` 与 `Recovery` 子目录分类正确
+1. 确认目标子目录：`amp/loco/`（Flat/Rough）或 `amp/FlatWalk/`（FlatWalk）
+2. LAFAN 链路：在 `cut_bvh_clips.py` 增加 `CLIP_JOBS` → §4.2 → `mimic_npz_to_amp_npz.py --output-dir .../amp/loco`
+3. amp_gait 链路：`retarget_npz_to_amp_npz.py --output-dir .../amp/FlatWalk`
+4. 运行 `validate_amp_motions.py --fail-on-issues`
+5. 目视：`visualize_amp_npz.py --mujoco-robot` 或训练 smoke test
 
 ---
 
@@ -199,9 +255,11 @@ Delayed Termination / Recovery       motions/s17/amp/*.npz
 
 | 项                  | 实现                                                                                  |
 | ------------------ | ----------------------------------------------------------------------------------- |
-| `get_spec()`       | 加载 `biped_s17.xml` + mesh；删除 XML 原生 `<motor>`；自动命名碰撞 geom（`left_foot*_collision` 等） |
+| `get_spec()`       | 加载 `biped_s17.xml` + mesh；删除 XML 原生 `<motor>`；**删除 head hinge（fixed 刚性连接）**；自动命名碰撞 geom |
 | 初始姿态               | `KNEES_BENT_KEYFRAME`，z=0.95（参考 G1 弯膝，关节名映射到 s17）                                   |
-| 执行器                | `KuavoActuatorCfg_*`（见 §5.5），8 组共 **23 DOF**                                        |
+| 执行器                | `KuavoActuatorCfg_*`（见 §5.5），8 组共 **21 DOF**（不含 head）                                |
+| Policy action      | **21 维**（`S17_NUM_ACTIONS`）；actor/critic 的 joint obs 亦为 21 维                      |
+| 头部                 | MJCF 中 `zhead_1/2_link` 保留为 **fixed** 子连杆；legacy NPZ 末 2 列 head 在加载时 strip          |
 | PD 增益              | 与 G1 相同公式：`stiffness = armature × (10 Hz × 2π)²`，`armature=0.003`                   |
 | `S17_ACTION_SCALE` | `0.25 × effort / stiffness`，写入 `joint_pos` action                                   |
 | 导出                 | `src/assets/robots/__init__.py` → `get_biped_s17_robot_cfg` / `S17_ACTION_SCALE`    |
@@ -235,9 +293,24 @@ Foot 相关 reward / 摩擦随机化需要 foot site，已在 `leg_l6_link` / `l
 
 | 文件            | 作用                                                     |
 | ------------- | ------------------------------------------------------ |
-| `env_cfgs.py` | 机器人 entity、body/foot/contact 映射、motion 路径、action scale |
-| `rl_cfg.py`   | AMP 判别器 body 映射、`min_normalized_std`（23 维）、motion 目录   |
-| `__init__.py` | 注册 `Biped-S17-AMP-Flat` / `Biped-S17-AMP-Rough`        |
+| `env_cfgs.py` | 机器人 entity、body/foot/contact 映射、**分任务 motion 路径**、21-DOF action |
+| `rl_cfg.py`   | AMP 判别器 body 映射、`min_normalized_std`（**21 维**）、`amp_motion_files` |
+| `__init__.py` | 注册 `Biped-S17-AMP-Flat` / `Rough` / **`FlatWalk`**        |
+
+**已注册任务一览：**
+
+| 任务 ID | 地形 | Motion 来源 | `experiment_name` | 说明 |
+|---------|------|-------------|-------------------|------|
+| `Biped-S17-AMP-Rough` | 随机 rough | `amp/loco/`（WalkandRun + Recovery） | `s17_amp_locomotion` | 与 G1 Rough 对应 |
+| `Biped-S17-AMP-Flat` | 平面 | 同上 | `s17_amp_locomotion` | LAFAN loco + recovery |
+| `Biped-S17-AMP-FlatWalk` | 平面 | **`amp/FlatWalk/` 仅** | `s17_amp_flatwalk` | amp_gait 平地步态；无 recovery、无 delay reset |
+
+**FlatWalk 相对 Flat 的主要差异**（其余 reward / AMP 网络 / 21-DOF 设定相同）：
+
+- Motion：30 条 amp_gait retarget，**不加载** `loco/Recovery`
+- AMP 判别器：`amp_motion_files` 指向 `FlatWalk/`，不与 loco 混训
+- 速度指令范围更窄（训练 `lin_vel_x∈[-0.6,1.2]` 等；见 `env_cfgs.py`）
+- `delay_reset_env_ratio=0`（Flat 在 play 时仍可能启用 motion delay）
 
 
 **AMP body 映射（11 个，与 G1 思路一致）：**
@@ -267,9 +340,11 @@ root:   base_link
 | 自碰撞 subtree            | `pelvis`                    | `base_link`                   |
 | 足摩擦 geom               | `left_foot1~7_collision`    | `left_foot1~9_collision`      |
 | COM 随机化 body           | `torso_link`                | `torso`                       |
-| WalkandRun motion      | `motions/g1/amp/WalkandRun` | `motions/s17/amp/WalkandRun`  |
-| Recovery motion        | `motions/g1/amp/Recovery`   | `motions/s17/amp/Recovery`    |
-| Action 维 / joint obs 维 | 29                          | **23**（由 entity 自动推断）         |
+| WalkandRun motion      | `motions/g1/amp/WalkandRun` | `motions/s17/amp/loco/WalkandRun` |
+| Recovery motion        | `motions/g1/amp/Recovery`   | `motions/s17/amp/loco/Recovery`    |
+| FlatWalk motion        | —                           | `motions/s17/amp/FlatWalk/`（仅 FlatWalk 任务） |
+| AMP 判别器 motion 根    | `motions/g1/amp`            | loco 任务：`amp/loco/`；FlatWalk：`amp/FlatWalk/` |
+| Action 维 / joint obs 维 | 29                          | **21**                              |
 
 
 Critic / AMP 观测组的 `body_pos_b`、`body_ori_b`、`body_lin_vel_b`、`body_ang_vel_b` 均使用上表 anchor + 11 body 列表。
@@ -292,7 +367,7 @@ Critic / AMP 观测组的 `body_pos_b`、`body_ori_b`、`body_lin_vel_b`、`body
 | `PA4315_36`      | leg_l5/l6, leg_r5/r6                      |
 | `ruiwoPA60_16`   | zarm_l1/r1                                |
 | `ruiwoPA4315_36` | zarm_l2~~l4, zarm_r2~~r4                  |
-| `ruiwoPA4310_25` | zhead_1/2（Y1 取自 joint `actuatorfrcrange`） |
+| ~~`ruiwoPA4310_25`~~ | ~~zhead_1/2~~（head 已 fixed，无 head actuator） |
 
 
 **注意：** 当前 `X1`（满扭拐点速度）未标定，默认为 `1e9`，T-N 降扭实际上未生效；等价于恒定扭矩上限 `min(Y1, effort_limit)`。后续可从电机手册补 `X1` 或采用 `X1 ≈ 0.7×X2` 启发式。
@@ -302,16 +377,16 @@ Critic / AMP 观测组的 `body_pos_b`、`body_ori_b`、`body_lin_vel_b`、`body
 PPO / AMP 网络结构与超参与 G1 **完全一致**（512-256-128、lr=1e-3、`amp_reward_coef=0.1` 等），仅改机器人相关字段：
 
 
-| 参数                   | G1                  | S17                  |
-| -------------------- | ------------------- | -------------------- |
-| `experiment_name`    | `g1_amp_locomotion` | `s17_amp_locomotion` |
-| `amp_motion_files`   | `motions/g1/amp`    | `motions/s17/amp`    |
-| `min_normalized_std` | 29 × 0.05           | **23 × 0.05**        |
-| `amp_anchor_name`    | `torso_link`        | `torso`              |
-| `amp_body_names`     | G1 连杆名              | s17 连杆名（§5.3）        |
+| 参数                   | G1                  | S17（Flat / Rough）   | S17（FlatWalk）        |
+| -------------------- | ------------------- | -------------------- | --------------------- |
+| `experiment_name`    | `g1_amp_locomotion` | `s17_amp_locomotion` | `s17_amp_flatwalk`    |
+| `amp_motion_files`   | `motions/g1/amp`    | `motions/s17/amp/loco` | `motions/s17/amp/FlatWalk` |
+| `min_normalized_std` | 29 × 0.05           | **21 × 0.05**        | **21 × 0.05**         |
+| `amp_anchor_name`    | `torso_link`        | `torso`              | `torso`               |
+| `amp_body_names`     | G1 连杆名              | s17 连杆名（§5.3）        | 同左                    |
 
 
-`AMPLoader` 启动时递归加载 `s17/amp/` 下全部 NPZ，按 `amp_body_names` + `amp_anchor_name` 计算 style 特征；`num_actions` 从 env 读取（23），自动对齐策略维度。**未修改** `amp_ppo.py`、discriminator 结构或 `amp_task_reward_lerp`。
+`AMPLoader` 按 `amp_motion_files` 递归加载 NPZ；`num_actions` 从 env 读取（**21**）。legacy NPZ 的 23 列 `joint_pos` 在 `ampmotion_loader.py` 中自动去掉 head 列。**未修改** `amp_ppo.py`、discriminator 结构或 `amp_task_reward_lerp`。
 
 ### 5.7 验证任务注册
 
@@ -326,7 +401,7 @@ pip install -e rsl_rl/
 
 ```bash
 python scripts/list_envs.py --keyword S17
-# 预期：Biped-S17-AMP-Flat、Biped-S17-AMP-Rough
+# 预期：Biped-S17-AMP-Flat、Biped-S17-AMP-Rough、Biped-S17-AMP-FlatWalk
 ```
 
 常见失败：`ModuleNotFoundError: rsl_rl.runners.amp_on_policy_runner` → 未安装本仓库 fork 的 `rsl_rl/`（见 §9）。
@@ -338,42 +413,115 @@ python scripts/list_envs.py --keyword S17
 ### 6.1 Smoke 测试（建议正式训练前）
 
 ```bash
+conda activate amp
+cd /path/to/AMP_mjlab
+
 # 可选：单 env reset 验证
 python -c "
 import src.tasks
 from mjlab.tasks.registry import load_env_cfg
 from mjlab.envs import ManagerBasedRlEnv
-cfg = load_env_cfg('Biped-S17-AMP-Flat')
+cfg = load_env_cfg('Biped-S17-AMP-FlatWalk')
 cfg.scene.num_envs = 4
 env = ManagerBasedRlEnv(cfg=cfg, device='cuda:0')
 obs, _ = env.reset()
-print('reset OK')
+print('reset OK, num_actions=', env.action_manager.total_action_dim)
 env.close()
 "
 
-# Smoke 训练：少量 env + 少量 iter
-python scripts/train.py Biped-S17-AMP-Flat \
+# Smoke 训练：少量 env + 少量 iter（FlatWalk 示例）
+python scripts/train.py Biped-S17-AMP-FlatWalk \
   --env.scene.num-envs=64 \
   --agent.max-iterations=50 \
-  --agent.run-name=smoke_s17
+  --agent.run-name=smoke_flatwalk
 ```
 
-通过标准：能加载 16 条 motion、无 body 名报错、写出 checkpoint 到 `logs/rsl_rl/s17_amp_locomotion/`。
+通过标准：能加载对应 motion 目录、无 body 名报错、checkpoint 写入 `logs/rsl_rl/<experiment_name>/`。
 
 ### 6.2 正式训练
 
 ```bash
+# LAFAN loco + recovery（平面）
 python scripts/train.py Biped-S17-AMP-Flat --env.scene.num-envs=4096
+
+# 同上 motion，rough 地形
+python scripts/train.py Biped-S17-AMP-Rough --env.scene.num-envs=4096
+
+# amp_gait 平地步态库（FlatWalk 专用 motion，不与 loco 混用）
+python scripts/train.py Biped-S17-AMP-FlatWalk --env.scene.num-envs=4096
 ```
 
-### 6.3 评估
+TensorBoard：
+
+```bash
+tensorboard --logdir logs/rsl_rl/s17_amp_flatwalk
+tensorboard --logdir logs/rsl_rl/s17_amp_locomotion
+```
+
+### 6.3 策略回放（play）
+
+`scripts/play.py` 支持三种 viewer：
+
+| `--viewer` | 说明 |
+|------------|------|
+| `auto`（默认） | 有 `DISPLAY`/`WAYLAND` 时用 Native MuJoCo 窗口，否则 Viser |
+| `native` | 本地 MuJoCo GUI（**无**键盘速度控制，twist 仍由 env 随机采样） |
+| `viser` | 浏览器 3D 界面（`http://localhost:8080`），带仿真控制与 debug 面板，**推荐远程/无头环境** |
+
+**Viser 回放（推荐）：**
+
+```bash
+python scripts/play.py Biped-S17-AMP-FlatWalk \
+  --checkpoint-file logs/rsl_rl/s17_amp_flatwalk/<run-dir>/model_3300.pt \
+  --viewer viser \
+  --num-envs 1
+```
+
+浏览器打开终端提示的 URL（通常 `http://127.0.0.1:8080`）。在 Viser 侧边栏可暂停/单步、切换 env、查看 contact 等 overlay；速度指令仍由环境的 `twist` command 采样（FlatWalk play 配置见 `env_cfgs.py`）。
+
+**Native 窗口回放：**
 
 ```bash
 python scripts/play.py Biped-S17-AMP-Flat \
-  --checkpoint-file logs/rsl_rl/s17_amp_locomotion/<run>/model_<iter>.pt
+  --checkpoint-file logs/rsl_rl/s17_amp_locomotion/<run-dir>/model_<iter>.pt \
+  --viewer native
 ```
 
-日志目录由 `rl_cfg.py` 中 `experiment_name` 决定（`s17_amp_locomotion`）。
+**Flat / Rough loco 示例：**
+
+```bash
+python scripts/play.py Biped-S17-AMP-Flat \
+  --checkpoint-file logs/rsl_rl/s17_amp_locomotion/<run-dir>/model_<iter>.pt \
+  --viewer viser
+```
+
+**常用 play 参数：**
+
+```bash
+# 指定 GPU / 单环境 / 关闭 termination（便于长时间观察）
+python scripts/play.py Biped-S17-AMP-FlatWalk \
+  --checkpoint-file path/to/model.pt \
+  --viewer viser \
+  --device cuda:0 \
+  --num-envs 1 \
+  --no-terminations
+
+# 录制视频（需 checkpoint，输出到 run 目录 videos/play/）
+python scripts/play.py Biped-S17-AMP-FlatWalk \
+  --checkpoint-file path/to/model.pt \
+  --video --video-length 500
+
+# 导出 ONNX（默认开启，输出到 logs/.../export/）
+python scripts/play.py Biped-S17-AMP-FlatWalk \
+  --checkpoint-file path/to/model.pt \
+  --export-onnx
+```
+
+**说明：**
+
+- Checkpoint **只存 21 维 policy 权重**；修改机器人模型（如 head fixed）后，**无需重新训练**即可直接 play 查看新外观。
+- 任务 ID 必须与训练时一致（FlatWalk checkpoint 用 `Biped-S17-AMP-FlatWalk`）。
+- 日志目录由 `rl_cfg.py` 的 `experiment_name` 决定：`s17_amp_locomotion`（Flat/Rough）或 `s17_amp_flatwalk`。
 
 训练现象参考 G1：约 20k iter 附近可能出现 recovery 能力阶跃，属正常现象（见主 README）。
 
@@ -386,9 +534,9 @@ python scripts/play.py Biped-S17-AMP-Flat \
 
 | 项目             | 说明                                                        |
 | -------------- | --------------------------------------------------------- |
-| obs 维度         | 由 23 关节 + IMU + command 等决定，与 G1（29 关节）不同                 |
-| action 维度      | **23**（当前含头 2 DOF；若锁头需同步改 constants 与 motion）             |
-| 关节顺序           | 与 `biped_s17.xml` 中 actuated joint 顺序一致，sim ↔ 真机需 mapping |
+| obs 维度         | 由 **21** 关节 + IMU + command 等决定，与 G1（29 关节）不同                 |
+| action 维度      | **21**（head 已 fixed，不在 policy 中）                             |
+| 关节顺序           | 与仿真 **21 hinge** 顺序一致（见 `S17_SIM_JOINT_NAMES`）；sim ↔ 真机需 mapping |
 | IMU 帧          | s17 IMU 在 **torso**（G1 在 pelvis），部署语义不同                   |
 | `ACTION_SCALE` | 来自 `s17_constants.py` 的 `S17_ACTION_SCALE`                |
 | AMP style body | 11 个 link，anchor=`torso`（见 §5.3）                          |
@@ -404,14 +552,23 @@ python scripts/play.py Biped-S17-AMP-Flat \
 
 ```text
 src/assets/robots/biped_s17/
-  xml/biped_s17.xml                    # MJCF（IMU、foot site 已改）
-  s17_constants.py                     # Entity + PD + action scale
+  xml/biped_s17.xml                    # MJCF 源文件（IMU、foot site；head hinge 在 get_spec 中删除）
+  s17_constants.py                     # Entity + PD + 21-DOF action + head fixed
   kuavo_actuators.py                   # Kuavo 电机 T-N 模型
-src/assets/motions/s17/amp/           # AMP 训练用 NPZ
-scripts/mimic_npz_to_amp_npz.py       # mimic → AMP 转换
-src/tasks/amp_loco/config/g1/         # G1 参考配置
-src/tasks/amp_loco/config/biped_s17/  # S17 任务配置（env_cfgs / rl_cfg / __init__）
-rsl_rl/                               # 带 AMP 扩展的 rsl_rl（需 pip install -e rsl_rl/）
+src/assets/motions/s17/
+  paths.py                             # loco / FlatWalk motion 路径
+  amp/loco/WalkandRun/ Recovery/       # Flat + Rough 任务
+  amp/FlatWalk/                        # FlatWalk 任务（30 条）
+scripts/mimic_npz_to_amp_npz.py        # LAFAN mimic → AMP
+scripts/retarget_npz_to_amp_npz.py     # amp_gait retarget → AMP
+scripts/utils/validate_amp_motions.py  # 批量校验 NPZ
+scripts/utils/visualize_amp_npz.py     # 单条 motion 可视化
+scripts/play.py                        # play（--viewer native|viser|auto）
+src/tasks/amp_loco/config/g1/          # G1 参考配置
+src/tasks/amp_loco/config/biped_s17/   # S17 任务配置（env_cfgs / rl_cfg / __init__）
+rsl_rl/                                # 带 AMP 扩展的 rsl_rl（需 pip install -e rsl_rl/）
+logs/rsl_rl/s17_amp_locomotion/        # Flat / Rough 训练日志
+logs/rsl_rl/s17_amp_flatwalk/          # FlatWalk 训练日志
 ```
 
 ### leju_soma_retarget
@@ -447,7 +604,19 @@ A: 可以，但需改 `csv_to_npz.py` 的机器人 env 与关节列表；当前�
 A: 建议单次 fall+getup **6–10 s**；当前 4 条 Recovery 约 6.7–8.1 s（@30fps 源），转 50fps 后约 6.7–8.1 s 有效时长。
 
 **Q: 头关节要不要进 policy？**  
-A: locomotion 建议锁头或固定默认角，减少 action 维与 motion 复杂度；当前 XML 保留 2 DOF（23 维 action），motion 与训练已一致包含头关节。
+A: **不进**。`get_spec()` 将 `zhead_1/2_joint` 删 hinge（等价 URDF fixed），policy 为 **21 维**；legacy NPZ 仍含 23 列（head=0），加载时自动 strip。已有 21 维 checkpoint 可直接 play。
+
+**Q: FlatWalk 和 Flat 有什么区别？**  
+A: 地形同为平面，但 **motion 库与 AMP 判别器数据分离**：Flat/Rough 用 `amp/loco/`（LAFAN + recovery），FlatWalk 仅用 `amp/FlatWalk/`（amp_gait）。FlatWalk 无 recovery、速度指令范围更窄、`experiment_name=s17_amp_flatwalk`。详见 §5.3。
+
+**Q: play 时机器人不走 / 原地转？**  
+A: Native viewer 无键盘控速，twist 由 env 随机采样（含一定比例的 standing / heading）。建议 `--viewer viser --num-envs 1`；FlatWalk 训练 checkpoint 需用任务 ID `Biped-S17-AMP-FlatWalk`。
+
+**Q: Viser 打不开？**  
+A: 确认 `--viewer viser`，查看终端输出的 URL；远程机器需 SSH 端口转发（如 `ssh -L 8080:localhost:8080`）。无 DISPLAY 时 `auto` 也会选 Viser。
+
+**Q: Rough 和 Flat 会混用 FlatWalk motion 吗？**  
+A: **不会**。`paths.py` + `env_cfgs.py` / `rl_cfg.py` 已按任务分开；Rough/Flat 的 `amp_motion_files` 为 `amp/loco/`，FlatWalk 为 `amp/FlatWalk/`。
 
 **Q: Kuavo 执行器的 T-N 曲线生效了吗？**  
 A: 当前 `X1` 未标定（默认 1e9），高速降扭未启用；实际为恒定扭矩上限。见 §5.5。
@@ -461,14 +630,15 @@ A: 降低 `RETARGET_BATCH_SIZE`（如 4 或 8）。
 
 ```text
 [✓] motion NPZ + 机器人 XML
-[✓] 修改 biped_s17.xml（IMU 名、foot site）
+[✓] loco motion 迁至 amp/loco/；FlatWalk motion（30 条）+ retarget 脚本
+[✓] 修改 biped_s17.xml（IMU 名、foot site）；get_spec head fixed + 21 DOF
 [✓] s17_constants.py + kuavo_actuators.py + robots/__init__.py
-[✓] src/tasks/amp_loco/config/biped_s17/ 三套配置 + register
+[✓] config/biped_s17/ 三套任务 + FlatWalk 注册
 [✓] pip install -e . + pip install -e rsl_rl/
 [✓] list_envs → smoke 训练
-[→] Flat 全量训练（4096 env）→ play 可视化
+[→] FlatWalk / Flat 全量训练 → play（Viser）可视化
 [ ] Rough 地形训练
 [ ] ONNX 导出 → wbc_fsm 部署映射
 ```
 
-训练已在 `Biped-S17-AMP-Flat` 上启动后，下一步为监控 TensorBoard、play 可视化，再视需要上 Rough 与部署。
+FlatWalk 与 Flat 可并行实验；评估时务必匹配任务 ID 与 checkpoint 的 `experiment_name`。
