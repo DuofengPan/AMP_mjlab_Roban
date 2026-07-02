@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from dataclasses import MISSING
 from typing import TYPE_CHECKING
 
+from src.assets.robots.biped_s17.s17_constants import strip_head_from_motion_dof
+
 
 class MotionLoader:
     def __init__(
@@ -62,11 +64,13 @@ class MotionLoader:
                 continue
             motion_name = os.path.splitext(filename)[0]
             data = np.load(os.path.join(dir_path, filename))
+            joint_pos = strip_head_from_motion_dof(data["joint_pos"])
+            joint_vel = strip_head_from_motion_dof(data["joint_vel"])
             result.append({
                 "motion_name": motion_name,
                 "fps": data["fps"],
-                "dof_pos": torch.tensor(data["joint_pos"], dtype=torch.float32, device=device),
-                "dof_vel": torch.tensor(data["joint_vel"], dtype=torch.float32, device=device),
+                "dof_pos": torch.tensor(joint_pos, dtype=torch.float32, device=device),
+                "dof_vel": torch.tensor(joint_vel, dtype=torch.float32, device=device),
                 "body_pos_w": torch.tensor(data["body_pos_w"], dtype=torch.float32, device=device),
                 "body_quat_w": torch.tensor(data["body_quat_w"], dtype=torch.float32, device=device),
                 "body_lin_vel_w": torch.tensor(data["body_lin_vel_w"], dtype=torch.float32, device=device),

@@ -27,6 +27,39 @@ from src import SRC_PATH
 S17_XML: Path = SRC_PATH / "assets" / "robots" / "biped_s17" / "xml" / "biped_s17.xml"
 assert S17_XML.exists()
 
+S17_HEAD_JOINT_NAMES: tuple[str, ...] = ("zhead_1_joint", "zhead_2_joint")
+
+# Full MJCF hinge order used by legacy AMP NPZ (head columns are always last).
+S17_MOTION_JOINT_NAMES: tuple[str, ...] = (
+  "leg_l1_joint",
+  "leg_l2_joint",
+  "leg_l3_joint",
+  "leg_l4_joint",
+  "leg_l5_joint",
+  "leg_l6_joint",
+  "leg_r1_joint",
+  "leg_r2_joint",
+  "leg_r3_joint",
+  "leg_r4_joint",
+  "leg_r5_joint",
+  "leg_r6_joint",
+  "waist_yaw_joint",
+  "zarm_l1_joint",
+  "zarm_l2_joint",
+  "zarm_l3_joint",
+  "zarm_l4_joint",
+  "zarm_r1_joint",
+  "zarm_r2_joint",
+  "zarm_r3_joint",
+  "zarm_r4_joint",
+  *S17_HEAD_JOINT_NAMES,
+)
+
+S17_SIM_JOINT_NAMES: tuple[str, ...] = tuple(
+  name for name in S17_MOTION_JOINT_NAMES if name not in S17_HEAD_JOINT_NAMES
+)
+assert len(S17_SIM_JOINT_NAMES) == 21
+
 
 def get_assets(meshdir: str) -> dict[str, bytes]:
   assets: dict[str, bytes] = {}
@@ -38,6 +71,39 @@ def _clear_native_actuators(spec: mujoco.MjSpec) -> None:
   """Remove XML <motor> actuators; mjlab adds position actuators instead."""
   for actuator in list(spec.actuators):
     spec.delete(actuator)
+
+
+def _fix_head_joints_as_fixed(spec: mujoco.MjSpec) -> None:
+  """Weld head links to torso (MuJoCo fixed joint = no hinge DOF).
+
+  Removes passive head hinges and their sensors so the head stays at the MJCF
+  zero pose. Legacy AMP NPZ still stores 23 joint columns; loaders drop the
+  trailing head columns to match the 21-DOF sim model.
+  """
+  head_joints = set(S17_HEAD_JOINT_NAMES)
+  for sensor in list(spec.sensors):
+    if getattr(sensor, "objname", None) in head_joints:
+      spec.delete(sensor)
+  for joint in list(spec.joints):
+    if joint.name in head_joints:
+      spec.delete(joint)
+
+
+def strip_head_from_motion_dof(array):
+  """Drop trailing head columns from legacy 23-dim motion joint arrays."""
+  import numpy as np
+
+  arr = np.asarray(array)
+  ndof = int(arr.shape[-1])
+  sim_ndof = len(S17_SIM_JOINT_NAMES)
+  motion_ndof = len(S17_MOTION_JOINT_NAMES)
+  if ndof == sim_ndof:
+    return arr
+  if ndof == motion_ndof:
+    return arr[..., :sim_ndof]
+  raise ValueError(
+    f"Expected motion joint dim {sim_ndof} or legacy {motion_ndof}, got {ndof}"
+  )
 
 
 def _assign_collision_geom_names(spec: mujoco.MjSpec) -> None:
@@ -72,6 +138,7 @@ def get_spec() -> mujoco.MjSpec:
   spec = mujoco.MjSpec.from_file(str(S17_XML))
   spec.assets = get_assets(spec.meshdir)
   _clear_native_actuators(spec)
+  _fix_head_joints_as_fixed(spec)
   _assign_collision_geom_names(spec)
   return spec
 
@@ -98,8 +165,6 @@ EFFORT_ANKLE = 74.0
 EFFORT_WAIST = 50.0
 EFFORT_ARM = 37.0
 EFFORT_ARM_SHOULDER = 14.1
-
-S17_HEAD_JOINT_NAMES = ("zhead_1_joint", "zhead_2_joint")
 
 S17_ACTUATOR_LEG_HIGH = KuavoActuatorCfg_PA81_25(
   target_names_expr=(

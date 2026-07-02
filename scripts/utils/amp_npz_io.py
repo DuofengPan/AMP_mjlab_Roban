@@ -192,6 +192,13 @@ def load_mujoco_model(mjcf_path: Path):
 
     mjcf_path = resolve_path(mjcf_path)
     try:
+        from src.assets.robots.biped_s17.s17_constants import S17_XML, get_spec
+
+        if mjcf_path.resolve() == S17_XML.resolve():
+            return get_spec().compile()
+    except Exception:
+        pass
+    try:
         return mujoco.MjModel.from_xml_path(str(mjcf_path))
     except Exception:
         return mujoco.MjModel.from_xml_string(mjcf_xml_without_mesh_files(mjcf_path))
@@ -254,10 +261,13 @@ def suggest_robot_for_ndof(ndof: int) -> str | None:
 
 def amp_npz_to_qpos(data: dict[str, np.ndarray], model_nq: int) -> tuple[np.ndarray, float]:
     """Build MuJoCo qpos from AMP NPZ (root from body 0 + joint_pos)."""
+    from src.assets.robots.biped_s17.s17_constants import strip_head_from_motion_dof
+
     fps = as_fps_scalar(data["fps"])
     root_pos = np.asarray(data["body_pos_w"], dtype=np.float64)[:, 0, :]
     root_quat = np.asarray(data["body_quat_w"], dtype=np.float64)[:, 0, :]
     joint_pos = np.asarray(data["joint_pos"], dtype=np.float64)
+    joint_pos = strip_head_from_motion_dof(joint_pos)
 
     num_frames = joint_pos.shape[0]
     if root_pos.shape[0] != num_frames or root_quat.shape[0] != num_frames:
@@ -494,6 +504,10 @@ def audit_motion(
     category = path.parent.name
 
     joint_pos = np.asarray(data["joint_pos"], dtype=np.float64)
+    if joint_pos.shape[1] > len(joint_info.names):
+        from src.assets.robots.biped_s17.s17_constants import strip_head_from_motion_dof
+
+        joint_pos = strip_head_from_motion_dof(joint_pos)
     body_pos_w = np.asarray(data["body_pos_w"], dtype=np.float64)
     body_lin_vel_w = np.asarray(data["body_lin_vel_w"], dtype=np.float64)
 

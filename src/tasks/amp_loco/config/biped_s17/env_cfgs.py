@@ -100,6 +100,7 @@ def biped_s17_amp_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   joint_pos_action = cfg.actions["joint_pos"]
   assert isinstance(joint_pos_action, JointPositionActionCfg)
+  joint_pos_action.actuator_names = S17_ACTUATED_JOINT_NAMES
   joint_pos_action.scale = S17_ACTION_SCALE
 
   cfg.viewer.body_name = "torso"
