@@ -86,6 +86,13 @@ def biped_s17_amp_ppo_runner_cfg() -> RslRlAmpRunnerCfg:
   )
 
 
+def biped_s17_amp_flat_ppo_runner_cfg() -> RslRlAmpRunnerCfg:
+  """Create RL runner configuration for biped_s17 AMP flat locomotion task."""
+  cfg = biped_s17_amp_ppo_runner_cfg()
+  cfg.max_iterations = 60001
+  return cfg
+
+
 def biped_s17_amp_flatwalk_ppo_runner_cfg() -> RslRlAmpRunnerCfg:
   """Create RL runner configuration for biped_s17 AMP flat-walk (amp_gait) task."""
   cfg = biped_s17_amp_ppo_runner_cfg()

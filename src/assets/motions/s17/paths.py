@@ -3,7 +3,7 @@
 Task-specific roots (no cross-mixing between loco and flatwalk):
 
   amp/loco/          Rough + Flat: WalkandRun + Recovery (env reset + discriminator)
-    WalkandRun/
+    WalkandRun/      amp_gait retarget clips (same library as FlatWalk/)
     Recovery/
   amp/FlatWalk/      FlatWalk task only (env reset + discriminator)
 """
