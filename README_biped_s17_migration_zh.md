@@ -212,11 +212,32 @@ python scripts/utils/validate_amp_motions.py \
 
 单条 motion 可视化（MuJoCo mesh 回放）：
 
+S17 使用与训练一致的 **21-DOF** 仿真模型（`get_spec()` 删除 head hinge）。NPZ 文件仍为 legacy **23 列** `joint_pos`（末 2 列 head=0），可视化/校验时会自动 strip 为 21 维；**无需** 手动指定 `--mjcf biped_s17.xml`。
+
 ```bash
+# 单条 FlatWalk / WalkandRun
 python scripts/utils/visualize_amp_npz.py \
   --robot s17 \
   --npz src/assets/motions/s17/amp/FlatWalk/直行_低速_小摆手_Skeleton_segment_000_f0-1271_retarget.npz \
   --mujoco-robot --loop --root-frame center
+
+# 单条 Recovery：先打印 audit，再 MuJoCo 回放
+python scripts/utils/visualize_amp_npz.py \
+  --robot s17 \
+  --npz src/assets/motions/s17/amp/loco/Recovery/fallAndGetUp1_subject1__fall_recovery_event02__f00394-00567.npz \
+  --report --mujoco-robot --loop --root-frame center
+
+# 批量校验 Recovery（4 条）
+python scripts/utils/validate_amp_motions.py \
+  --robot s17 \
+  --motion-root src/assets/motions/s17/amp/loco/Recovery \
+  --fail-on-issues
+
+# 依次播放 Recovery 目录下全部 clip（带 audit 摘要）
+python scripts/utils/visualize_amp_npz_sequence.py \
+  --robot s17 \
+  --motion-root src/assets/motions/s17/amp/loco/Recovery \
+  --audit --root-frame center
 ```
 
 当前 AMP NPZ 规格：
@@ -577,7 +598,8 @@ src/assets/motions/s17/
 scripts/mimic_npz_to_amp_npz.py        # LAFAN mimic → AMP
 scripts/retarget_npz_to_amp_npz.py     # amp_gait retarget → AMP
 scripts/utils/validate_amp_motions.py  # 批量校验 NPZ
-scripts/utils/visualize_amp_npz.py     # 单条 motion 可视化
+scripts/utils/visualize_amp_npz.py     # 单条 motion 可视化（S17 自动 21-DOF）
+scripts/utils/visualize_amp_npz_sequence.py  # 目录内多条顺序回放
 scripts/play.py                        # play（--viewer native|viser|auto）
 src/tasks/amp_loco/config/g1/          # G1 参考配置
 src/tasks/amp_loco/config/biped_s17/   # S17 任务配置（env_cfgs / rl_cfg / __init__）
@@ -629,6 +651,12 @@ A: Native viewer 无键盘控速，twist 由 env 随机采样（含一定比例�
 
 **Q: Viser 打不开？**  
 A: 确认 `--viewer viser`，查看终端输出的 URL；远程机器需 SSH 端口转发（如 `ssh -L 8080:localhost:8080`）。无 DISPLAY 时 `auto` 也会选 Viser。
+
+**Q: `visualize_amp_npz.py --mujoco-robot` 报 ndof=21 / nq=30 不匹配？**  
+A: 旧版脚本用 raw `scene.xml`（23 关节 MJCF）回放，与训练用 21-DOF 模型不一致。现已修复：`--robot s17` 时自动通过 `get_spec()` 编译 21-DOF 模型；legacy NPZ 的 23 列 `joint_pos` 会自动 strip head。直接使用 §4.3 命令即可，无需 `--mjcf`。
+
+**Q: 如何检查 Recovery 四条数据？**  
+A: 批量校验见 §4.3 `validate_amp_motions.py --motion-root .../Recovery`；MuJoCo 逐条回放用 `visualize_amp_npz_sequence.py --motion-root .../Recovery --audit --root-frame center`。
 
 **Q: Rough 和 Flat 会混用 FlatWalk motion 吗？**  
 A: **不会**。`paths.py` + `env_cfgs.py` / `rl_cfg.py` 已按任务分开；Rough/Flat 的 `amp_motion_files` 为 `amp/loco/`，FlatWalk 为 `amp/FlatWalk/`。

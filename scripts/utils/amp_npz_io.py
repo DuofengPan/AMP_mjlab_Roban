@@ -22,6 +22,11 @@ REQUIRED_KEYS = (
 DEFAULT_MJCF = Path("src/assets/robots/biped_s17/xml/biped_s17.xml")
 DEFAULT_VIS_MJCF = Path("src/assets/robots/biped_s17/xml/scene.xml")
 DEFAULT_MOTION_ROOT = Path("src/assets/motions/s17/amp/loco")
+S17_XML_DIR = Path("src/assets/robots/biped_s17/xml")
+S17_ROBOT_XML = S17_XML_DIR / "biped_s17.xml"
+S17_SCENE_XML = S17_XML_DIR / "scene.xml"
+S17_SIM_JOINT_COUNT = 21
+S17_LEGACY_MOTION_JOINT_COUNT = 23
 
 
 @dataclass(frozen=True)
@@ -187,17 +192,43 @@ def mjcf_xml_without_mesh_files(mjcf_path: Path) -> str:
     return text
 
 
+def _is_s17_mjcf(mjcf_path: Path) -> bool:
+    resolved = resolve_path(mjcf_path)
+    s17_root = resolve_path(S17_XML_DIR)
+    try:
+        return resolved.is_relative_to(s17_root)
+    except AttributeError:
+        return str(resolved).startswith(str(s17_root))
+
+
+def compile_s17_mujoco_model(*, with_scene: bool = False):
+    """Compile the 21-DOF S17 model used in training (head hinges removed)."""
+    import mujoco
+
+    from src.assets.robots.biped_s17.s17_constants import get_spec
+
+    spec = get_spec()
+    if with_scene:
+        has_floor = any(getattr(geom, "name", None) == "floor" for geom in spec.worldbody.geoms)
+        if not has_floor:
+            spec.worldbody.add_light(pos=[0, 0, 3.5], dir=[0, 0, -1])
+            spec.worldbody.add_geom(
+                name="floor",
+                type=mujoco.mjtGeom.mjGEOM_PLANE,
+                size=[0, 0, 0.05],
+                rgba=[0.2, 0.3, 0.4, 1],
+            )
+    return spec.compile()
+
+
 def load_mujoco_model(mjcf_path: Path):
     import mujoco
 
     mjcf_path = resolve_path(mjcf_path)
-    try:
-        from src.assets.robots.biped_s17.s17_constants import S17_XML, get_spec
-
-        if mjcf_path.resolve() == S17_XML.resolve():
-            return get_spec().compile()
-    except Exception:
-        pass
+    if _is_s17_mjcf(mjcf_path):
+        with_scene = mjcf_path.name == S17_SCENE_XML.name
+        model = compile_s17_mujoco_model(with_scene=with_scene)
+        return model
     try:
         return mujoco.MjModel.from_xml_path(str(mjcf_path))
     except Exception:
@@ -248,7 +279,11 @@ def collect_body_names(model) -> list[str]:
 
 
 def suggest_robot_for_ndof(ndof: int) -> str | None:
+    if int(ndof) == S17_SIM_JOINT_COUNT:
+        return "s17"
     for name, profile in ROBOT_PROFILES.items():
+        if name == "s17":
+            continue
         mjcf = resolve_path(profile.mjcf)
         try:
             model = load_mujoco_model(mjcf)
@@ -281,6 +316,11 @@ def amp_npz_to_qpos(data: dict[str, np.ndarray], model_nq: int) -> tuple[np.ndar
         )
         if hint is not None:
             msg += f" Try --robot {hint} for this NPZ."
+        if int(joint_pos.shape[1]) == S17_SIM_JOINT_COUNT and int(model_nq) - 7 == S17_LEGACY_MOTION_JOINT_COUNT:
+            msg += (
+                " S17 training uses a 21-DOF sim model (head fixed); use default --robot s17 "
+                "so scene.xml loads via get_spec(), not the raw 23-DOF MJCF."
+            )
         raise ValueError(msg)
 
     qpos = np.zeros((num_frames, int(model_nq)), dtype=np.float64)
@@ -575,7 +615,7 @@ def audit_motion(
     if fk_body_rmse is not None and fk_body_rmse > 1e-2:
         issues.append(f"FK/body_pos_w RMSE={fk_body_rmse:.4f} m (>1cm)")
 
-    violation_ratio = total_violations / max(1, num_frames * ndof)
+    violation_ratio = total_violations / max(1, num_frames * joint_pos.shape[1])
     if violation_ratio > max_joint_violation_ratio:
         top = worst_joints[0].name if worst_joints else "?"
         issues.append(

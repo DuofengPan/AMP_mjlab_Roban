@@ -8,9 +8,10 @@ Modes (combine as needed):
   --mujoco-bodies   Replay body_pos_w as MuJoCo mocap markers
 
 Examples:
-  python scripts/utils/visualize_amp_npz.py --robot s17 --npz src/assets/motions/s17/amp/WalkandRun/walk1_subject1__walk_forward_loop_001__f02641-02940.npz --report
+  python scripts/utils/visualize_amp_npz.py --robot s17 --npz src/assets/motions/s17/amp/loco/Recovery/fallAndGetUp1_subject1__fall_recovery_event02__f00394-00567.npz --report
+  python scripts/utils/visualize_amp_npz.py --robot s17 --npz src/assets/motions/s17/amp/FlatWalk/直行_低速_小摆手_Skeleton_segment_000_f0-1271_retarget.npz --mujoco-robot --loop --root-frame center
+  python scripts/utils/visualize_amp_npz_sequence.py --robot s17 --motion-root src/assets/motions/s17/amp/loco/Recovery --audit --root-frame center
   python scripts/utils/visualize_amp_npz.py --robot g1 --npz-dir src/assets/motions/g1/amp/WalkandRun --seed 0 --mujoco-robot --loop
-  python scripts/utils/visualize_amp_npz.py --npz ... --plot --plot-body-components --body-index 0
 """
 
 from __future__ import annotations
@@ -218,7 +219,7 @@ def parse_args() -> argparse.Namespace:
         "--mjcf",
         type=Path,
         default=None,
-        help="MJCF for --mujoco-robot (default: robot scene with floor).",
+        help="MJCF for --mujoco-robot (default: robot scene with floor). S17 uses 21-DOF get_spec().",
     )
     parser.add_argument(
         "--root-frame",
@@ -256,7 +257,21 @@ def main() -> int:
 
     print(f"[INFO] robot: {profile.name}")
     print(f"[INFO] file: {path}")
-    print(f"[INFO] fps={fps:.2f} T={num_frames} ndof={ndof} nbodies={nbodies}")
+    if profile.name == "s17" and ndof == 23:
+        from src.assets.robots.biped_s17.s17_constants import strip_head_from_motion_dof
+
+        sim_ndof = int(strip_head_from_motion_dof(np.asarray(data["joint_pos"])).shape[1])
+        print(
+            f"[INFO] fps={fps:.2f} T={num_frames} ndof={ndof} (file, incl. head) "
+            f"sim_ndof={sim_ndof} nbodies={nbodies}"
+        )
+    else:
+        print(f"[INFO] fps={fps:.2f} T={num_frames} ndof={ndof} nbodies={nbodies}")
+    if profile.name == "s17":
+        print(
+            f"[INFO] audit MJCF: {audit_mjcf_path} (nq={audit_model.nq}, "
+            f"{audit_model.nq - 7} hinge DOF)"
+        )
     print("[INFO] smoothness:")
     for key in ("joint_pos", "joint_vel", "body_pos_w", "body_lin_vel_w", "body_ang_vel_w"):
         stats = smoothness_stats(np.asarray(data[key]))

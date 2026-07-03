@@ -7,7 +7,8 @@ many meters from (0,0); the default camera targets the origin.
 
 Example:
   python scripts/utils/visualize_amp_npz_sequence.py
-  python scripts/utils/visualize_amp_npz_sequence.py --robot s17 --motion-root src/assets/motions/s17/amp/WalkandRun
+  python scripts/utils/visualize_amp_npz_sequence.py --robot s17 --motion-root src/assets/motions/s17/amp/loco/Recovery --audit --root-frame center
+  python scripts/utils/visualize_amp_npz_sequence.py --robot s17 --motion-root src/assets/motions/s17/amp/loco/WalkandRun
   python scripts/utils/visualize_amp_npz_sequence.py --robot g1 --motion-root src/assets/motions/g1/amp/WalkandRun
   python scripts/utils/visualize_amp_npz_sequence.py --root-frame inplace --loop-files
 """
@@ -58,7 +59,7 @@ def parse_args() -> argparse.Namespace:
         "--mjcf",
         type=Path,
         default=None,
-        help="MuJoCo scene for robot playback (default: robot scene.xml with floor).",
+        help="MuJoCo scene for robot playback (default: robot scene.xml with floor; S17 uses 21-DOF get_spec()).",
     )
     parser.add_argument(
         "--mode",
