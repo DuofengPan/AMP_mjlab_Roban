@@ -4,8 +4,9 @@ Task-specific roots (no cross-mixing between loco and flatwalk):
 
   amp/loco/          Rough + Flat: WalkandRun + Recovery (env reset + discriminator)
     WalkandRun/      amp_gait retarget clips (same library as FlatWalk/)
-    Recovery/
+    Recovery/        AMP NPZ only (no mimic intermediates under amp/loco/)
   amp/FlatWalk/      FlatWalk task only (env reset + discriminator)
+  mimic/             SOMA mimic NPZ backups (data+fps); not loaded by training
 """
 
 from __future__ import annotations
