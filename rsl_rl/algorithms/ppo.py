@@ -41,12 +41,12 @@ class PPO:
         self,
         policy,
         min_std=None,
-        num_learning_epochs=1,
-        num_mini_batches=1,
-        clip_param=0.2,
-        gamma=0.998,
-        lam=0.95,
-        value_loss_coef=1.0,
+        num_learning_epochs=1, # 同一批rollout数据训练的轮数
+        num_mini_batches=1, # 采集一个batch，但是将其分成多个小batch，输入网络
+        clip_param=0.2, # PPO的clip参数，用于限制策略更新的幅度
+        gamma=0.998, # 折扣因子，权衡长期和短期奖励的重要性
+        lam=0.95, # GAE参数，权衡优势函数的估计精度和稳定性
+        value_loss_coef=1.0, # 价值函数损失的权重
         vq_loss_coef=0.1,
         recon_loss_coef=0.01,
         entropy_coef=0.0,
@@ -164,7 +164,7 @@ class PPO:
         self.transition.values = self.policy.evaluate(critic_obs).detach()
         self.transition.actions_log_prob = self.policy.get_actions_log_prob(self.transition.actions).detach()
         self.transition.action_mean = self.policy.action_mean.detach()
-        self.transition.action_sigma = self.policy.action_std.detach()
+        self.transition.action_sigma = self.policy.action_std.detach() # 获取动作的标准差
         # need to record obs and critic_obs before env.step()
         self.transition.observations = obs
         self.transition.privileged_observations = critic_obs
@@ -200,6 +200,7 @@ class PPO:
         self.policy.reset(dones)
 
     def compute_returns(self, last_critic_obs):
+        # 在收集了足够多的rollout数据后，计算每个时刻的回报值
         # compute value for the last step
         last_values = self.policy.evaluate(last_critic_obs).detach()
         self.storage.compute_returns(
@@ -234,7 +235,7 @@ class PPO:
             generator = self.storage.recurrent_mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
         else:
             generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
-
+    # 遍历所有的小batch
         # iterate over batches
         for (
             obs_batch,

@@ -294,15 +294,31 @@ def suggest_robot_for_ndof(ndof: int) -> str | None:
     return None
 
 
+def align_joint_pos_to_sim(joint_pos: np.ndarray, sim_joint_count: int) -> np.ndarray:
+    """Map NPZ joint_pos columns to the MuJoCo sim hinge count.
+
+    S17 legacy AMP NPZ stores 23 hinge columns (incl. fixed head); training sim uses 21.
+    G1 and other robots use joint_pos width matching their sim model directly.
+    """
+    joint_pos = np.asarray(joint_pos, dtype=np.float64)
+    file_ndof = int(joint_pos.shape[-1])
+    if file_ndof == int(sim_joint_count):
+        return joint_pos
+    if file_ndof == S17_LEGACY_MOTION_JOINT_COUNT and int(sim_joint_count) == S17_SIM_JOINT_COUNT:
+        from src.assets.robots.biped_s17.s17_constants import strip_head_from_motion_dof
+
+        return strip_head_from_motion_dof(joint_pos)
+    return joint_pos
+
+
 def amp_npz_to_qpos(data: dict[str, np.ndarray], model_nq: int) -> tuple[np.ndarray, float]:
     """Build MuJoCo qpos from AMP NPZ (root from body 0 + joint_pos)."""
-    from src.assets.robots.biped_s17.s17_constants import strip_head_from_motion_dof
-
     fps = as_fps_scalar(data["fps"])
     root_pos = np.asarray(data["body_pos_w"], dtype=np.float64)[:, 0, :]
     root_quat = np.asarray(data["body_quat_w"], dtype=np.float64)[:, 0, :]
     joint_pos = np.asarray(data["joint_pos"], dtype=np.float64)
-    joint_pos = strip_head_from_motion_dof(joint_pos)
+    sim_joint_count = int(model_nq) - 7
+    joint_pos = align_joint_pos_to_sim(joint_pos, sim_joint_count)
 
     num_frames = joint_pos.shape[0]
     if root_pos.shape[0] != num_frames or root_quat.shape[0] != num_frames:
@@ -544,10 +560,7 @@ def audit_motion(
     category = path.parent.name
 
     joint_pos = np.asarray(data["joint_pos"], dtype=np.float64)
-    if joint_pos.shape[1] > len(joint_info.names):
-        from src.assets.robots.biped_s17.s17_constants import strip_head_from_motion_dof
-
-        joint_pos = strip_head_from_motion_dof(joint_pos)
+    joint_pos = align_joint_pos_to_sim(joint_pos, len(joint_info.names))
     body_pos_w = np.asarray(data["body_pos_w"], dtype=np.float64)
     body_lin_vel_w = np.asarray(data["body_lin_vel_w"], dtype=np.float64)
 
