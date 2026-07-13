@@ -17,19 +17,21 @@
 当前进度：
 
 
-| 模块                                        | 状态          | 路径/说明                                         |
-| ----------------------------------------- | ----------- | --------------------------------------------- |
-| 机器人 MJCF + mesh                           | ✅ 已就绪       | `src/assets/robots/biped_s17/`                |
-| AMP 格式 motion NPZ（loco）                   | ✅ 已就绪（16 条） | `src/assets/motions/s17/amp/loco/`            |
-| AMP 格式 motion NPZ（FlatWalk / amp_gait）    | ✅ 已就绪（30 条） | `src/assets/motions/s17/amp/FlatWalk/`        |
-| mimic → AMP 转换脚本                          | ✅ 已就绪       | `scripts/mimic_npz_to_amp_npz.py`             |
-| retarget gait → AMP 转换脚本                  | ✅ 已就绪       | `scripts/retarget_npz_to_amp_npz.py`          |
-| motion 校验 / 可视化工具                         | ✅ 已就绪       | `scripts/utils/validate_amp_motions.py` 等     |
-| MJCF 传感器 / foot site                      | ✅ 已就绪       | `biped_s17.xml`（§5.2）                         |
-| `s17_constants.py` + `kuavo_actuators.py` | ✅ 已就绪       | §5.1、§5.5（**21 DOF action，头部 fixed**）         |
-| AMP 任务注册与配置                               | ✅ 已就绪       | `src/tasks/amp_loco/config/biped_s17/`        |
-| Flat / FlatWalk 训练验证                      | 🔄 进行中      | `Biped-S17-AMP-Flat`、`Biped-S17-AMP-FlatWalk` |
-| wbc_fsm 部署映射                              | ⏳ 待完成       | obs/action 维度与关节顺序                            |
+| 模块                                        | 状态          | 路径/说明                                                 |
+| ----------------------------------------- | ----------- | ----------------------------------------------------- |
+| 机器人 MJCF + mesh                           | ✅ 已就绪       | `src/assets/robots/biped_s17/`                        |
+| AMP 格式 motion NPZ（loco）                   | ✅ 已就绪（16 条） | `src/assets/motions/s17/amp/loco/`                    |
+| AMP 格式 motion NPZ（FlatWalk / amp_gait）    | ✅ 已就绪（30 条） | `src/assets/motions/s17/amp/FlatWalk/`                |
+| mimic → AMP 转换脚本                          | ✅ 已就绪       | `scripts/mimic_npz_to_amp_npz.py`                     |
+| retarget gait → AMP 转换脚本                  | ✅ 已就绪       | `scripts/retarget_npz_to_amp_npz.py`                  |
+| motion 校验 / 可视化工具                         | ✅ 已就绪       | `scripts/utils/validate_amp_motions.py` 等             |
+| MJCF 传感器 / foot site                      | ✅ 已就绪       | `biped_s17.xml`（§5.2）                                 |
+| `s17_constants.py` + `kuavo_actuators.py` | ✅ 已就绪       | §5.1、§5.5（**21 DOF action，头部 fixed**）                 |
+| AMP 任务注册与配置                               | ✅ 已就绪       | `src/tasks/amp_loco/config/biped_s17/`                |
+| Flat / FlatWalk 训练验证                      | 🔄 进行中      | `Biped-S17-AMP-Flat`、`Biped-S17-AMP-FlatWalk`         |
+| 训练稳定性 P0 修复（见 §6.4）                       | ✅ 已落地       | ACTION_SCALE 限幅、`clip_actions`、rollout reward clamp   |
+| Recovery motion 地面对齐                      | ✅ 已修复       | `align_amp_motion_to_ground` + Recovery NPZ +0.1634 m |
+| wbc_fsm 部署映射                              | ⏳ 待完成       | obs/action 维度与关节顺序                                    |
 
 
 ---
@@ -40,7 +42,7 @@
 | 项目                    | G1                         | biped_s17                                     |
 | --------------------- | -------------------------- | --------------------------------------------- |
 | 可控 DOF（policy action） | 29                         | **21**（头 2 DOF 在 MJCF 中 **fixed**，不参与控制）      |
-| 仿真 hinge DOF          | 29                         | **21**（`get_spec()` 删除 `zhead_*` hinge）       |
+| 仿真 hinge DOF          | 29                         | **21**（`get_spec()` 删除 `zhead_`* hinge）       |
 | NPZ `joint_pos` 列数    | 29                         | **23**（legacy，末 2 列为 head=0；加载时自动 strip 为 21） |
 | 腰                     | yaw / roll / pitch         | **仅 waist_yaw**                               |
 | 臂                     | 7×2（含腕）                    | **4×2**                                       |
@@ -284,7 +286,7 @@ Delayed Termination / Recovery       motions/s17/amp/*.npz
 | Policy action      | **21 维**（`S17_NUM_ACTIONS`）；actor/critic 的 joint obs 亦为 21 维                            |
 | 头部                 | MJCF 中 `zhead_1/2_link` 保留为 **fixed** 子连杆；legacy NPZ 末 2 列 head 在加载时 strip              |
 | PD 增益              | 与 G1 相同公式：`stiffness = armature × (10 Hz × 2π)²`，`armature=0.003`                       |
-| `S17_ACTION_SCALE` | `0.25 × effort / stiffness`，写入 `joint_pos` action                                       |
+| `S17_ACTION_SCALE` | `0.25 × effort / stiffness`；**髋膝（l1–l4）上限 0.55**（对齐 G1，见 §6.4）                          |
 | 导出                 | `src/assets/robots/__init__.py` → `get_biped_s17_robot_cfg` / `S17_ACTION_SCALE`        |
 
 
@@ -409,9 +411,13 @@ PPO / AMP 网络结构与超参与 G1 **完全一致**（512-256-128、lr=1e-3�
 | `min_normalized_std` | 29 × 0.05           | **21 × 0.05**          | **21 × 0.05**              |
 | `amp_anchor_name`    | `torso_link`        | `torso`                | `torso`                    |
 | `amp_body_names`     | G1 连杆名              | s17 连杆名（§5.3）          | 同左                         |
+| `clip_actions`       | `null`（不裁剪）         | `**10.0`**             | `**10.0**`                 |
+| rollout reward clamp | 无                   | `**[-200, 300]**`      | `**[-200, 300]**`          |
 
 
 `AMPLoader` 按 `amp_motion_files` 递归加载 NPZ；`num_actions` 从 env 读取（**21**）。legacy NPZ 的 23 列 `joint_pos` 在 `ampmotion_loader.py` 中自动去掉 head 列。**未修改** `amp_ppo.py`、discriminator 结构或 `amp_task_reward_lerp`。
+
+S17 在 `RslRlAmpRunnerCfg` 中额外增加 `rollout_reward_clip_min/max`，由 `rsl_rl/runners/amp_on_policy_runner.py` 在 AMP reward 混合后、`process_env_step()` 前执行 clamp（见 §6.4）。
 
 ### 5.7 验证任务注册
 
@@ -482,8 +488,6 @@ python scripts/train.py Biped-S17-AMP-Flat \
   --agent.load_run=from_flatwalk \
   --agent.load_checkpoint=model_40600.pt
 ```
-
-
 
 TensorBoard：
 
@@ -561,6 +565,126 @@ python scripts/play.py Biped-S17-AMP-FlatWalk \
 
 训练现象参考 G1：约 20k iter 附近可能出现 recovery 能力阶跃，属正常现象（见主 README）。
 
+### 6.4 S17 训练崩溃诊断与 P0 修复
+
+本节记录 S17 全量训练（`s17_amp_locomotion`，从 FlatWalk `model_40600.pt` resume）中观察到的**两类数值崩溃**，以及已落地的 **P0 防护**。对照基准为 **G1**（同一 `make_amp_env_cfg()` + AMP 管线可正常训练），问题集中在 **S17 特化参数** 与 **rollout 数值护栏缺失**，而非整条 AMP 框架失效。
+
+#### 6.4.1 观察到的两种崩溃模式
+
+
+| 阶段 / iter               | TensorBoard 典型症状                                            | 根因机制                                                                                         |
+| ----------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| **~15k**（例：iter 15163）  | `returns_min ≈ -4000+`，`value_loss` 尖峰                      | GAE + critic bootstrap 在 **delay 期间** `dones=0`，回报沿 horizon 累积；**不是**每步 `-200` 惩罚            |
+| **~94k**（例：iter 94094+） | `action_rate_l2 ≈ -10²²`，`skipped 20/20` non-finite batches | Policy **raw action 突变** → `action_rate_l2` 无界放大 → PPO 整轮 mini-batch 全跳过，**有效更新为 0**（训练实质死亡） |
+
+
+两类模式可先后出现，也可单独出现；第二类的 `skipped 20/20` 意味着权重已污染，**不应从该 checkpoint 继续训**。
+
+#### 6.4.2 常见误解澄清
+
+`**is_terminated` 与 delay 期间惩罚**
+
+- `is_terminated` 读取 `_terminated_buf`，**不含** timeout。
+- `DelayedTerminationManager` 在 delay 窗口内抑制 `_terminated_buf` → delay 期间 `dones=0`，**不会**每步连续扣 `-200`。
+- `is_terminated` 权重 `-200` 再乘 `dt≈0.02` → 每次**真实终止事件**约 `**-4`** 量级，而非每步 `-200`。
+
+**是否需要参考项目的 motion torso 跟踪？**
+
+- **暂不需要**。G1 在 delay 期间同样用 `track_root_height` → `default_root_state` 高度，可稳定训练。
+- 参考项目（`whole_body_general_tracking`）按 motion 时间轴跟踪躯干；AMP_mjlab 速度任务只有 reset 快照 + AMP expert，**无逐步 motion command**，强行引入参考方案属于另一套 MDP，与当前 G1 基线不一致。
+
+**FlatWalk → Loco resume 是否「背锅」？**
+
+- 同一 FlatWalk 数据在其他项目可训通；resume 本身不是根因。
+- 崩溃主因是 S17 **动作尺度偏大** + **缺少 action/reward 数值上限**，在长跑中放大为第二类崩溃。
+
+#### 6.4.3 S17 特有问题（相对 G1）
+
+
+| 问题                   | G1                      | S17（修复前）                               | 影响                                             |
+| -------------------- | ----------------------- | -------------------------------------- | ---------------------------------------------- |
+| 髋膝 `ACTION_SCALE`    | 最大约 **0.55**            | 髋膝约 **3.17**（同 raw action → 关节指令大 ~6×） | 仿真更「暴力」，易激发 action 跳变与接触不稳定                    |
+| `clip_actions`       | `null`                  | `null`                                 | raw action 无硬上限，`action_rate_l2` 可被 outlier 拉爆 |
+| rollout reward clamp | 无                       | 无                                      | 单步异常回报可污染 GAE / critic target                  |
+| Recovery NPZ 地面对齐    | G1 clip 脚高约 **+1.5 cm** | Recovery 脚最低约 **-10~-15 cm**（穿地）       | reset 姿态异常，FK 后脚底穿透地面                          |
+
+
+后三项中，**髋膝 ACTION_SCALE** 与 **clip_actions** 直接对应 iter ~94k 的 `action_rate_l2` 爆炸；**reward clamp** 主要抑制 iter ~15k 一类 critic 尖峰。
+
+#### 6.4.4 P0 修复（三件套，已落地）
+
+**① 压低 S17 髋膝 `ACTION_SCALE`**
+
+文件：`src/assets/robots/biped_s17/s17_constants.py`
+
+- 对 `leg_l1..l4`、`leg_r1..r4` 设上限 `**S17_LEG_HIP_KNEE_ACTION_SCALE_CAP = 0.55**`（与 G1 同量级）。
+- 踝 `l5/l6` 保持约 **1.56**（未改）。
+
+修复后尺度示例：
+
+```text
+leg_l1..l4, leg_r1..r4 : 0.55
+leg_l5/l6              : 1.56
+waist / arm            : 按 0.25×effort/stiffness 公式
+```
+
+**② `clip_actions = 10.0`**
+
+文件：`src/tasks/amp_loco/config/biped_s17/rl_cfg.py`（`RslRlAmpRunnerCfg` 默认值）
+
+- 训练时经 `scripts/train.py` → `RslRlVecEnvWrapper(clip_actions=...)` 在 `env.step()` 前对 raw action 做 `torch.clamp(±10)`。
+- **为何选 10 而非 1**：`init_std=1.0` 下正常采样多在 ±3 内；**±10** 只截极端 outlier，能压住 `action_rate_l2` 又不长期饱和动作；**±1** 过紧，会压制探索。
+- Flat / Rough / FlatWalk 均继承同一 `RslRlAmpRunnerCfg`，**无需**单独改 flatwalk 配置。
+
+**③ Rollout reward clamp `[-200, 300]`**
+
+
+| 组件   | 路径                                                                                       |
+| ---- | ---------------------------------------------------------------------------------------- |
+| 配置字段 | `rollout_reward_clip_min=-200`，`rollout_reward_clip_max=300`（`rl_cfg.py`）                |
+| 实现   | `rsl_rl/training_guard.py` → `clamp_rollout_rewards()`                                   |
+| 调用时机 | `rsl_rl/runners/amp_on_policy_runner.py`：**AMP reward 混合之后**、`process_env_step()` **之前** |
+
+
+仅影响写入 PPO rollout 的逐步回报，**不修改** env 内原始 reward 计算与 TensorBoard 的 `Episode_Reward/`* 日志语义。
+
+#### 6.4.5 Recovery motion 穿地修复（数据侧）
+
+**根因**：`mimic_npz_to_amp_npz.py` 对 S17 21-DOF 模型做 FK 时未做地面对齐，Recovery 片段脚底低于地面。
+
+**已做修改**：
+
+
+| 文件                                                                    | 作用                                                             |
+| --------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `scripts/utils/amp_npz_io.py`                                         | `align_amp_motion_to_ground()`；`audit_motion` 对 Recovery 也检查穿地 |
+| `scripts/mimic_npz_to_amp_npz.py`                                     | 转换时自动对齐地面                                                      |
+| `scripts/utils/align_amp_motion_ground.py`                            | 批量修复已有 NPZ                                                     |
+| `src/assets/motions/s17/amp/loco/Recovery/fallAndGetUp1_subject1.npz` | 原位抬高 **+0.1634 m**                                             |
+
+
+修复后脚最低约 **4–6 cm**（略悬空，可接受；关键是消除穿地）。
+
+重训前建议校验：
+
+```bash
+python scripts/utils/validate_amp_motions.py --robot s17 \
+  --motion-root src/assets/motions/s17/amp/loco/Recovery --fail-on-issues
+```
+
+#### 6.4.6 重训检查清单
+
+1. **不要用 iter ~94094 之后污染过的 checkpoint**；可从 FlatWalk `model_40600.pt` resume，或从头训。
+2. 开训后确认 `logs/.../params/agent.yaml` 含：
+  - `clip_actions: 10.0`
+  - `rollout_reward_clip_min: -200.0`
+  - `rollout_reward_clip_max: 300.0`
+3. TensorBoard 重点盯：
+  - `Loss/skipped_non_finite_batches`（应长期为 0）
+  - `Episode_Reward/action_rate_l2`（不应出现 10¹⁰+ 量级）
+  - `Loss/value_function`、`returns_min` / `returns_max`
+4. 可选 P1（尚未实现）：reset 地面抬高安全网、`nan_detection` termination、连续全 skip 自动停训、Walk 滑移数据过滤。
+
 ---
 
 ## 7. 部署（wbc_fsm）
@@ -600,7 +724,10 @@ scripts/retarget_npz_to_amp_npz.py     # amp_gait retarget → AMP
 scripts/utils/validate_amp_motions.py  # 批量校验 NPZ
 scripts/utils/visualize_amp_npz.py     # 单条 motion 可视化（S17 自动 21-DOF）
 scripts/utils/visualize_amp_npz_sequence.py  # 目录内多条顺序回放
+scripts/utils/align_amp_motion_ground.py   # 批量抬高 motion 消除穿地
+scripts/utils/amp_npz_io.py                # align_amp_motion_to_ground / audit
 scripts/play.py                        # play（--viewer native|viser|auto）
+rsl_rl/training_guard.py               # rollout reward clamp 等训练护栏
 src/tasks/amp_loco/config/g1/          # G1 参考配置
 src/tasks/amp_loco/config/biped_s17/   # S17 任务配置（env_cfgs / rl_cfg / __init__）
 rsl_rl/                                # 带 AMP 扩展的 rsl_rl（需 pip install -e rsl_rl/）
@@ -667,6 +794,15 @@ A: 当前 `X1` 未标定（默认 1e9），高速降扭未启用；实际为恒�
 **Q: retarget OOM / Killed？**  
 A: 降低 `RETARGET_BATCH_SIZE`（如 4 或 8）。
 
+**Q: S17 训练到 ~90k iter 后 `skipped 20/20`、`action_rate_l2` 爆炸？**  
+A: 典型为 raw action 跳变 + 髋膝 `ACTION_SCALE` 过大 + 无 `clip_actions`。已落地 P0：`ACTION_SCALE` 髋膝上限 0.55、`clip_actions=10`、rollout reward `[-200,300]`。勿从污染 checkpoint 续训，见 §6.4。
+
+**Q: delay 期间是不是每步扣 -200 导致 critic 崩溃？**  
+A: 不是。`is_terminated` 在 delay 内被抑制；`-200` 为权重，乘 `dt` 后每次真实终止约 -4。~15k 的 `returns_min` 尖峰多来自 GAE 在无 `dones` 时沿 horizon 累积，reward clamp 可缓解，见 §6.4.2。
+
+**Q: Recovery reset 时机器人穿地？**  
+A: 检查 NPZ 是否经地面对齐：`validate_amp_motions.py --motion-root .../Recovery`。可用 `align_amp_motion_ground.py` 批量修复，见 §6.4.5。
+
 ---
 
 ## 10. 推荐实施顺序
@@ -679,7 +815,9 @@ A: 降低 `RETARGET_BATCH_SIZE`（如 4 或 8）。
 [✓] config/biped_s17/ 三套任务 + FlatWalk 注册
 [✓] pip install -e . + pip install -e rsl_rl/
 [✓] list_envs → smoke 训练
-[→] FlatWalk / Flat 全量训练 → play（Viser）可视化
+[✓] 训练稳定性 P0：髋膝 ACTION_SCALE 0.55、clip_actions=10、rollout reward clamp
+[✓] Recovery NPZ 地面对齐（+0.1634 m）
+[→] FlatWalk / Flat 全量训练（用 P0 后新 run）→ play（Viser）可视化
 [ ] Rough 地形训练
 [ ] ONNX 导出 → wbc_fsm 部署映射
 ```

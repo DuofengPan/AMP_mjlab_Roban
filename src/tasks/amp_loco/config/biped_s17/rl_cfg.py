@@ -15,6 +15,9 @@ from mjlab.rl import (
 @dataclass
 class RslRlAmpRunnerCfg(RslRlOnPolicyRunnerCfg):
   """Extended runner config with AMP-specific parameters."""
+  clip_actions: float | None = 10.0
+  rollout_reward_clip_min: float | None = -200.0
+  rollout_reward_clip_max: float | None = 300.0
   amp_reward_coef: float = 0.1
   amp_motion_files: str = ""
   amp_num_preload_transitions: int = 200000

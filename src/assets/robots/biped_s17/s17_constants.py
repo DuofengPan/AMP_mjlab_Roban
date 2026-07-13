@@ -303,6 +303,19 @@ def get_biped_s17_robot_cfg() -> EntityCfg:
   )
 
 
+# Cap hip/knee action scale to G1-like authority (raw 0.25*effort/stiffness can exceed 3.0).
+S17_LEG_HIP_KNEE_JOINT_NAMES: tuple[str, ...] = (
+  "leg_l1_joint",
+  "leg_l2_joint",
+  "leg_l3_joint",
+  "leg_l4_joint",
+  "leg_r1_joint",
+  "leg_r2_joint",
+  "leg_r3_joint",
+  "leg_r4_joint",
+)
+S17_LEG_HIP_KNEE_ACTION_SCALE_CAP: float = 0.55
+
 S17_ACTION_SCALE: dict[str, float] = {}
 for actuator in S17_ARTICULATION.actuators:
   assert isinstance(actuator, BuiltinPositionActuatorCfg)
@@ -311,6 +324,12 @@ for actuator in S17_ARTICULATION.actuators:
   assert effort is not None
   for name in actuator.target_names_expr:
     S17_ACTION_SCALE[name] = 0.25 * effort / stiffness
+
+for _joint_name in S17_LEG_HIP_KNEE_JOINT_NAMES:
+  S17_ACTION_SCALE[_joint_name] = min(
+    S17_ACTION_SCALE[_joint_name],
+    S17_LEG_HIP_KNEE_ACTION_SCALE_CAP,
+  )
 
 
 if __name__ == "__main__":

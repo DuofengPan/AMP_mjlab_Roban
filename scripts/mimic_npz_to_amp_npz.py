@@ -22,10 +22,17 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
 from tqdm import tqdm
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from scripts.utils.amp_npz_io import align_amp_motion_to_ground
 
 
 def _normalize_quat_wxyz(q: np.ndarray, eps: float = 1e-8) -> np.ndarray:
@@ -271,17 +278,21 @@ def convert_one(
     for b in range(nb):
         body_ang_vel_w[:, b, :] = _so3_derivative(body_quat_w[:, b, :], dt).astype(np.float32)
 
+    motion_pack = {
+        "fps": np.array([float(output_fps)], dtype=np.float64),
+        "joint_pos": joint_pos,
+        "joint_vel": joint_vel,
+        "body_pos_w": body_pos_w,
+        "body_quat_w": body_quat_w,
+        "body_lin_vel_w": body_lin_vel_w,
+        "body_ang_vel_w": body_ang_vel_w,
+    }
+    motion_pack, lift = align_amp_motion_to_ground(motion_pack, ground_clearance=0.01)
+    if lift > 0.0:
+        qpos[:, 2] += lift
+
     npz_out.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(
-        str(npz_out),
-        fps=np.array([float(output_fps)], dtype=np.float64),
-        joint_pos=joint_pos,
-        joint_vel=joint_vel,
-        body_pos_w=body_pos_w,
-        body_quat_w=body_quat_w,
-        body_lin_vel_w=body_lin_vel_w,
-        body_ang_vel_w=body_ang_vel_w,
-    )
+    np.savez(str(npz_out), **motion_pack)
 
 
 def _iter_npz_files(input_dir: Path, exclude_substrings: tuple[str, ...] = ()) -> list[Path]:

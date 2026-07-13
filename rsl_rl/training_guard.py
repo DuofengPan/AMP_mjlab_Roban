@@ -13,6 +13,20 @@ def total_mini_batches(num_learning_epochs: int, num_mini_batches: int) -> int:
     return int(num_learning_epochs) * int(num_mini_batches)
 
 
+def clamp_rollout_rewards(
+    rewards: torch.Tensor,
+    *,
+    min_reward: float | None,
+    max_reward: float | None,
+) -> torch.Tensor:
+    """Clamp per-env rollout rewards before PPO storage to limit critic target spikes."""
+    if min_reward is None and max_reward is None:
+        return rewards
+    lo = float("-inf") if min_reward is None else float(min_reward)
+    hi = float("inf") if max_reward is None else float(max_reward)
+    return torch.clamp(rewards, min=lo, max=hi)
+
+
 def summarize_returns(returns_batch: torch.Tensor) -> dict[str, float]:
     with torch.no_grad():
         finite = returns_batch[torch.isfinite(returns_batch)]

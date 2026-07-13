@@ -37,7 +37,7 @@ from rsl_rl.modules import (
     StudentTeacherRecurrent,
 )
 from rsl_rl.utils import AMPLoader, Normalizer, store_code_state
-from rsl_rl.training_guard import handle_training_abort, iter_scalar_loss_items
+from rsl_rl.training_guard import clamp_rollout_rewards, handle_training_abort, iter_scalar_loss_items
 
 
 def _stability_kwargs(cfg: dict) -> dict:
@@ -104,6 +104,8 @@ class AmpOnPolicyRunner:
     def __init__(self, env: VecEnv, train_cfg: dict, log_dir: str | None = None, device="cpu"):
         _migrate_train_cfg(train_cfg)
         self.cfg = train_cfg
+        self._rollout_reward_clip_min = train_cfg.get("rollout_reward_clip_min")
+        self._rollout_reward_clip_max = train_cfg.get("rollout_reward_clip_max")
         self.alg_cfg = train_cfg["algorithm"]
         self.policy_cfg = train_cfg["policy"]
         self.device = device
@@ -359,6 +361,11 @@ class AmpOnPolicyRunner:
                     rewards = self.alg.discriminator.predict_amp_reward(
                         amp_obs, next_amp_obs_with_term, rewards, normalizer=self.alg.amp_normalizer
                     )[0]
+                    rewards = clamp_rollout_rewards(
+                        rewards,
+                        min_reward=self._rollout_reward_clip_min,
+                        max_reward=self._rollout_reward_clip_max,
+                    )
                     amp_obs = torch.clone(next_amp_obs)
                     self.alg.process_env_step(rewards, dones, infos, next_amp_obs_with_term)
 

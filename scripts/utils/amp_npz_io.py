@@ -437,6 +437,51 @@ def smoothness_stats(values: np.ndarray) -> dict[str, float]:
     }
 
 
+def compute_ground_lift(
+    body_pos_w: np.ndarray,
+    *,
+    ground_clearance: float = 0.01,
+    body_indices: Sequence[int] | None = None,
+) -> float:
+    """Return a uniform +Z shift so the lowest tracked body reaches ``ground_clearance``."""
+    pos = np.asarray(body_pos_w, dtype=np.float64)
+    if body_indices is not None:
+        pos = pos[:, list(body_indices), :]
+    min_z = float(np.min(pos[..., 2]))
+    return max(0.0, float(ground_clearance) - min_z)
+
+
+def align_amp_motion_to_ground(
+    data: dict[str, np.ndarray],
+    *,
+    ground_clearance: float = 0.01,
+    body_indices: Sequence[int] | None = None,
+    lift: float | None = None,
+) -> tuple[dict[str, np.ndarray], float]:
+    """Lift an AMP motion clip uniformly in world Z to remove ground penetration."""
+    body_pos_w = np.asarray(data["body_pos_w"], dtype=np.float64).copy()
+    if lift is None:
+        lift = compute_ground_lift(
+            body_pos_w,
+            ground_clearance=ground_clearance,
+            body_indices=body_indices,
+        )
+    lift = float(lift)
+    if lift <= 0.0:
+        return data, 0.0
+
+    body_pos_w[..., 2] += lift
+    out = dict(data)
+    out["body_pos_w"] = body_pos_w.astype(np.float32)
+
+    fps = as_fps_scalar(data["fps"])
+    dt = 1.0 / float(fps)
+    if "body_lin_vel_w" in data:
+        out["body_lin_vel_w"] = np.gradient(body_pos_w, dt, axis=0).astype(np.float32)
+
+    return out, lift
+
+
 @dataclass
 class JointLimitReport:
     name: str
@@ -635,20 +680,20 @@ def audit_motion(
             f"joint limit violations={total_violations} ({100 * violation_ratio:.1f}% of frame×dof), worst={top}"
         )
 
+    if float(foot_l_z.min()) < -foot_penetration_tol or float(foot_r_z.min()) < -foot_penetration_tol:
+        issues.append(
+            f"foot penetration: left_min={foot_l_z.min():.3f}, right_min={foot_r_z.min():.3f}"
+        )
+
     if category == "WalkandRun":
-        if float(foot_l_z.min()) < -foot_penetration_tol or float(foot_r_z.min()) < -foot_penetration_tol:
-            issues.append(
-                f"foot penetration: left_min={foot_l_z.min():.3f}, right_min={foot_r_z.min():.3f}"
-            )
         if float(base_z.min()) < walk_base_z_min:
             issues.append(f"base height too low: min_z={base_z.min():.3f}")
-        if category == "WalkandRun":
-            for side, slip in (("left", foot_left_slip), ("right", foot_right_slip)):
-                if np.isfinite(slip.slip_p95) and slip.slip_p95 > foot_slip_p95_tol:
-                    issues.append(
-                        f"foot slip ({side}): p95={slip.slip_p95:.3f} m/s "
-                        f"(>{foot_slip_p95_tol:.2f}, contact_ratio={100 * slip.contact_ratio:.0f}%)"
-                    )
+        for side, slip in (("left", foot_left_slip), ("right", foot_right_slip)):
+            if np.isfinite(slip.slip_p95) and slip.slip_p95 > foot_slip_p95_tol:
+                issues.append(
+                    f"foot slip ({side}): p95={slip.slip_p95:.3f} m/s "
+                    f"(>{foot_slip_p95_tol:.2f}, contact_ratio={100 * slip.contact_ratio:.0f}%)"
+                )
 
     audit = MotionAudit(
         path=path,
