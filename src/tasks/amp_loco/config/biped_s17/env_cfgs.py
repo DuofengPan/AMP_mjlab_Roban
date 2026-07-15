@@ -19,7 +19,17 @@ from src.assets.robots.biped_s17.s17_constants import (
   S17_ACTUATED_JOINT_NAMES,
   get_biped_s17_robot_cfg,
 )
+from src.tasks.amp_loco import mdp as amp_mdp
 from src.tasks.amp_loco.amp_env_cfg import make_amp_env_cfg
+
+
+def _apply_s17_recovery_rewards(cfg: ManagerBasedRlEnvCfg) -> None:
+  """S17-only recovery shaping: progress reward on delay envs (not shared with G1)."""
+  cfg.rewards["root_height_progress"] = RewardTermCfg(
+    func=amp_mdp.root_height_progress,
+    weight=100.0,
+    params={"mask_delay": True, "delay_env_rew_ratio": 1.0},
+  )
 
 
 def _apply_s17_no_head_joint_obs(cfg: ManagerBasedRlEnvCfg) -> None:
@@ -132,6 +142,8 @@ def biped_s17_amp_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     params={"sensor_name": self_collision_cfg.name, "force_threshold": 10.0},
   )
   cfg.rewards["body_ang_vel_xy_l2"].params["body_cfg"].body_names = (root_name,)
+
+  _apply_s17_recovery_rewards(cfg)
 
   cfg.observations["critic"].terms["body_pos_b"].params["anchor_cfg"].body_names = (
     anchor_name,

@@ -224,6 +224,52 @@ def soft_landing(
       cost = cost * active
   return cost
 
+class root_height_progress:
+  """Progress reward for closing root-height error during delayed recovery.
+
+  Rewards per-step improvement in |h_target - z_root| (one-sided shaping).
+  Only positive progress is rewarded; regressions are not penalized.
+  Active only on delay envs via ``_apply_delay_env_reward_mask_only``.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv) -> None:
+    del cfg
+    self._prev_height_error = torch.zeros(env.num_envs, device=env.device)
+    self._initialized = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+
+  def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+    if env_ids is None:
+      env_ids = slice(None)
+    self._prev_height_error[env_ids] = 0.0
+    self._initialized[env_ids] = False
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    mask_delay: bool = True,
+    delay_env_rew_ratio: float = 1.0,
+    asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  ) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    desired_height = asset.data.default_root_state[:, 2]
+    cur_root_height = asset.data.body_link_pos_w[:, 0, 2]
+    height_error = torch.abs(desired_height - cur_root_height)
+
+    progress = torch.zeros_like(height_error)
+    initialized = self._initialized
+    progress[initialized] = torch.clamp(
+      self._prev_height_error[initialized] - height_error[initialized],
+      min=0.0,
+    )
+
+    self._prev_height_error = height_error.clone()
+    self._initialized[:] = True
+
+    return _apply_delay_env_reward_mask_only(
+      env, progress, mask_delay, delay_env_rew_ratio
+    )
+
+
 def self_collision_cost(
   env: ManagerBasedRlEnv,
   sensor_name: str,
