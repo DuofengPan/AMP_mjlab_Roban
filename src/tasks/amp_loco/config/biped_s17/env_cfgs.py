@@ -24,11 +24,30 @@ from src.tasks.amp_loco.amp_env_cfg import make_amp_env_cfg
 
 
 def _apply_s17_recovery_rewards(cfg: ManagerBasedRlEnvCfg) -> None:
-  """S17-only recovery shaping: progress reward on delay envs (not shared with G1)."""
+  """S17-only recovery shaping (Phase B2).
+
+  After Phase B play still only struggled in a few poses (e.g. face-up):
+  keep height demoted, relax upright gate so early roll/get-up can earn
+  progress, and slightly raise progress weight. No action_rate changes.
+  """
+  cfg.rewards["track_root_height"] = RewardTermCfg(
+    func=amp_mdp.track_root_height,
+    weight=0.5,
+    params={
+      "std": 0.3,
+      "mask_delay": True,
+      "delay_env_rew_ratio": 1.5,
+      "upright_std": 0.4,
+    },
+  )
   cfg.rewards["root_height_progress"] = RewardTermCfg(
     func=amp_mdp.root_height_progress,
-    weight=100.0,
-    params={"mask_delay": True, "delay_env_rew_ratio": 1.0},
+    weight=150.0,
+    params={
+      "mask_delay": True,
+      "delay_env_rew_ratio": 1.0,
+      "upright_std": 0.4,
+    },
   )
 
 
@@ -122,12 +141,14 @@ def biped_s17_amp_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.events["foot_friction"].params["asset_cfg"].geom_names = geom_names
   cfg.events["base_com"].params["asset_cfg"].body_names = ("torso",)
 
-  cfg.events["init_motion_loader"].params["delay_reset_env_ratio"] = 0.4
+  # Phase B2: more recovery envs + bias reset toward low/tipped poses.
+  cfg.events["init_motion_loader"].params["delay_reset_env_ratio"] = 0.65
   cfg.events["init_motion_loader"].params["max_delay_steps"] = 250
 
   cfg.events["init_motion_loader"].params["motion_dir"] = LOCO_WALK_AND_RUN_DIR_STR
   cfg.events["init_motion_loader"].params["recovery_dir"] = LOCO_RECOVERY_DIR_STR
   cfg.events["reset_from_motion"].params["motion_dir"] = LOCO_WALK_AND_RUN_DIR_STR
+  cfg.events["reset_from_motion"].params["recovery_hard_pose_bias"] = 0.8
 
   cfg.rewards["track_anchor_linear_velocity"].params["anchor_cfg"].body_names = (
     anchor_name,

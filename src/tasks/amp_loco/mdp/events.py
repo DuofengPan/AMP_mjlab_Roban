@@ -6,6 +6,7 @@ import torch
 
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.utils.lab_api.math import quat_apply_inverse
 
 if TYPE_CHECKING:
     from mjlab.envs import ManagerBasedRlEnv
@@ -58,9 +59,19 @@ class MotionResetManager:
         print(f"[MotionResetManager] Loaded {len(loader.motion_data)} clips, {motion_count} frames from {motion_dir}")
 
         if loader.motion_data_recovery:
-            self.recovery_frames[motion_dir] = self._concat_frames(loader.motion_data_recovery)
-            recovery_count = self.recovery_frames[motion_dir]["root_pos"].shape[0]
-            print(f"[MotionResetManager] Loaded {len(loader.motion_data_recovery)} recovery clips, {recovery_count} frames from {recovery_dir}")
+            recovery = self._concat_frames(loader.motion_data_recovery)
+            recovery["sample_weight"] = self._hard_pose_sample_weights(
+                recovery["root_pos"],
+                recovery["root_quat"],
+            )
+            self.recovery_frames[motion_dir] = recovery
+            recovery_count = recovery["root_pos"].shape[0]
+            hard_frac = float((recovery["sample_weight"] > recovery["sample_weight"].median()).float().mean())
+            print(
+                f"[MotionResetManager] Loaded {len(loader.motion_data_recovery)} recovery clips, "
+                f"{recovery_count} frames from {recovery_dir} "
+                f"(hard-pose weight mass above median={hard_frac:.2f})"
+            )
 
     # ------------------------------------------------------------------
     # Reset
@@ -72,6 +83,7 @@ class MotionResetManager:
         env_ids: torch.Tensor | None,
         motion_dir: str,
         asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+        recovery_hard_pose_bias: float = 0.0,
     ) -> None:
         if env_ids is None:
             env_ids = torch.arange(env.num_envs, device=env.device, dtype=torch.int)
@@ -97,7 +109,13 @@ class MotionResetManager:
         if len(delay_ids) > 0:
             recovery = self.recovery_frames.get(motion_dir)
             frames = recovery if recovery is not None else self.walk_run_frames[motion_dir]
-            self._write_reset_state(env, delay_ids, frames, asset_cfg)
+            self._write_reset_state(
+                env,
+                delay_ids,
+                frames,
+                asset_cfg,
+                hard_pose_bias=recovery_hard_pose_bias if recovery is not None else 0.0,
+            )
 
     def _get_delay_env_mask(self, env: ManagerBasedRlEnv) -> torch.Tensor | None:
         """Get delay env mask from DelayedTerminationManager if installed."""
@@ -112,10 +130,16 @@ class MotionResetManager:
         env_ids: torch.Tensor,
         frames: dict[str, torch.Tensor],
         asset_cfg: SceneEntityCfg,
+        hard_pose_bias: float = 0.0,
     ) -> None:
         total_frames = frames["root_pos"].shape[0]
         num_reset = len(env_ids)
-        idx = torch.randint(0, total_frames, (num_reset,), device=env.device)
+        idx = self._sample_frame_indices(
+            frames,
+            num_reset=num_reset,
+            device=env.device,
+            hard_pose_bias=hard_pose_bias,
+        )
 
         asset: Entity = env.scene[asset_cfg.name]
 
@@ -157,6 +181,43 @@ class MotionResetManager:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _hard_pose_sample_weights(
+        root_pos: torch.Tensor,
+        root_quat: torch.Tensor,
+    ) -> torch.Tensor:
+        """Higher weight for low root height and large tip-over (hard recovery)."""
+        z = root_pos[:, 2]
+        gravity_w = torch.zeros(root_pos.shape[0], 3, device=root_pos.device, dtype=root_pos.dtype)
+        gravity_w[:, 2] = -1.0
+        gravity_b = quat_apply_inverse(root_quat, gravity_w)
+        upright_xy = gravity_b[:, 0] ** 2 + gravity_b[:, 1] ** 2
+
+        # Standing ~0.9m / upright_xy~0 → low weight; lying / tipped → high weight.
+        height_score = torch.clamp((0.85 - z) / 0.55, min=0.0, max=1.0)
+        tilt_score = torch.clamp(upright_xy / 0.6, min=0.0, max=1.0)
+        hardness = 0.5 * height_score + 0.5 * tilt_score
+        return (0.05 + 0.95 * hardness).pow(1.5)
+
+    @staticmethod
+    def _sample_frame_indices(
+        frames: dict[str, torch.Tensor],
+        *,
+        num_reset: int,
+        device: torch.device | str,
+        hard_pose_bias: float,
+    ) -> torch.Tensor:
+        total_frames = frames["root_pos"].shape[0]
+        if hard_pose_bias <= 0.0 or "sample_weight" not in frames:
+            return torch.randint(0, total_frames, (num_reset,), device=device)
+
+        bias = float(min(max(hard_pose_bias, 0.0), 1.0))
+        weights = frames["sample_weight"].to(device=device, dtype=torch.float32)
+        hard_probs = weights / torch.clamp(weights.sum(), min=1e-8)
+        uniform = torch.full_like(hard_probs, 1.0 / total_frames)
+        probs = (1.0 - bias) * uniform + bias * hard_probs
+        return torch.multinomial(probs, num_reset, replacement=True)
 
     @staticmethod
     def _concat_frames(motions: list[dict]) -> dict[str, torch.Tensor]:
@@ -224,11 +285,17 @@ def reset_from_motion_data(
     env_ids: torch.Tensor | None,
     motion_dir: str,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+    recovery_hard_pose_bias: float = 0.0,
 ) -> None:
-    """Reset event: reset envs from random motion frames, with delay support."""
+    """Reset event: reset envs from random motion frames, with delay support.
+
+    ``recovery_hard_pose_bias`` in [0, 1] blends recovery-frame sampling toward
+    low-height / high-tilt poses (0 = uniform, 1 = fully hardness-weighted).
+    """
     MotionResetManager.get().reset(
         env=env,
         env_ids=env_ids,
         motion_dir=motion_dir,
         asset_cfg=asset_cfg,
+        recovery_hard_pose_bias=recovery_hard_pose_bias,
     )

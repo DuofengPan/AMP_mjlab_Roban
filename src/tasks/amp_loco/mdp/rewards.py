@@ -25,13 +25,41 @@ _DEFAULT_ASSET_CFG = SceneEntityCfg("robot")
 
 
 def _get_delay_env_mask(env: ManagerBasedRlEnv) -> torch.Tensor | None:
-  """Get delaying env mask from DelayedTerminationManager if installed."""
+  """Recovery reward mask: delay envs while root height error remains large."""
   tm = env.termination_manager
   delay_env_mask = getattr(tm, "_delay_env_mask", None)
-  delay_counters = getattr(tm, "_delay_counters", None)
-  if isinstance(delay_env_mask, torch.Tensor) and isinstance(delay_counters, torch.Tensor):
-    return delay_env_mask & (delay_counters > 0)
-  return None
+  if not isinstance(delay_env_mask, torch.Tensor):
+    return None
+
+  asset: Entity = env.scene["robot"]
+  desired_height = asset.data.default_root_state[:, 2]
+  cur_root_height = asset.data.body_link_pos_w[:, 0, 2]
+  height_error = torch.abs(desired_height - cur_root_height)
+  return delay_env_mask & (height_error > 0.15)
+
+
+def _root_upright_xy(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Projected-gravity xy magnitude in root frame (0 ≈ upright)."""
+  asset: Entity = env.scene[asset_cfg.name]
+  root_quat_w = asset.data.body_link_quat_w[:, 0, :]
+  gravity_w = torch.zeros(env.num_envs, 3, device=env.device)
+  gravity_w[:, 2] = -1.0
+  gravity_b = quat_apply_inverse(root_quat_w, gravity_w)
+  return gravity_b[:, 0] ** 2 + gravity_b[:, 1] ** 2
+
+
+def _upright_gate(
+  env: ManagerBasedRlEnv,
+  *,
+  upright_std: float = 0.25,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Soft gate in [0, 1]: near 1 when upright, near 0 when tipped over."""
+  upright_xy = _root_upright_xy(env, asset_cfg)
+  return torch.exp(-upright_xy / max(upright_std, 1e-6))
 
 
 def _apply_delay_env_reward_scaling(
@@ -156,15 +184,22 @@ def track_root_height(
   std: float,
   mask_delay: bool = False,
   delay_env_rew_ratio: float = 1.0,
+  upright_std: float | None = None,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
 ) -> torch.Tensor:
-  """Reward for tracking the commanded anchor height."""
+  """Reward for tracking stand height.
+
+  When ``upright_std`` is set, multiply by a soft upright gate so mid-height /
+  arched poses cannot farm the exp term alone.
+  """
   asset: Entity = env.scene[asset_cfg.name]
 
   desired_height = asset.data.default_root_state[:, 2]
   cur_root_height = asset.data.body_link_pos_w[:, 0, 2]
   height_error = torch.square(desired_height - cur_root_height)
   reward = torch.exp(-height_error / std**2)
+  if upright_std is not None and upright_std > 0.0:
+    reward = reward * _upright_gate(env, upright_std=upright_std, asset_cfg=asset_cfg)
   return _apply_delay_env_reward_mask_only(env, reward, mask_delay, delay_env_rew_ratio)
 
 def feet_slip(
@@ -229,6 +264,7 @@ class root_height_progress:
 
   Rewards per-step improvement in |h_target - z_root| (one-sided shaping).
   Only positive progress is rewarded; regressions are not penalized.
+  Multiplied by an upright gate so arched / crab poses get little credit.
   Active only on delay envs via ``_apply_delay_env_reward_mask_only``.
   """
 
@@ -248,6 +284,7 @@ class root_height_progress:
     env: ManagerBasedRlEnv,
     mask_delay: bool = True,
     delay_env_rew_ratio: float = 1.0,
+    upright_std: float | None = 0.25,
     asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
   ) -> torch.Tensor:
     asset: Entity = env.scene[asset_cfg.name]
@@ -260,7 +297,12 @@ class root_height_progress:
     progress[initialized] = torch.clamp(
       self._prev_height_error[initialized] - height_error[initialized],
       min=0.0,
+      max=0.01,
     )
+    if upright_std is not None and upright_std > 0.0:
+      progress = progress * _upright_gate(
+        env, upright_std=upright_std, asset_cfg=asset_cfg
+      )
 
     self._prev_height_error = height_error.clone()
     self._initialized[:] = True

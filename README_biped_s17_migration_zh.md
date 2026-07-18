@@ -496,6 +496,28 @@ tensorboard --logdir logs/rsl_rl/s17_amp_flatwalk
 tensorboard --logdir logs/rsl_rl/s17_amp_locomotion
 ```
 
+终端与 TensorBoard 字段名基本一一对应（如终端 `Mean reward` ↔ `Train/mean_reward`）。`Episode_Reward/*` 是 episode 累计奖励再除以 `episode_length_s`（通常 20），数值会被压小，**优先看趋势**。Recovery 是否真学会，最终以 play（`delay_reset_env_ratio=1.0`）为准；`mean_delay_steps` 下降不等于会起身。
+
+建议每几 k iter 扫一遍：① 是否数值崩；② 走路是否还在学；③ recovery 相关项是否抬升；④ 定期 play。指标速查：
+
+| 指标（终端 / TensorBoard） | 健康参考 | 警告 / 失败信号 | 说明 |
+| --- | --- | --- | --- |
+| `skipped_non_finite_batches` | 恒 **0** | 偶发 >0；持续 >0 则训练实质死亡 | 非有限 batch 跳过数 |
+| `returns_abs_max`（及 min/max） | 通常 **~3–10** | 到几十；冲向数百（贴 clamp） | GAE return 量级；配合 P0 reward clamp |
+| `action_rate_l2` | 约 **-0.05～-0.15** | 到 -0.3；持续变大负（如 10¹⁰+） | 动作抖动惩罚；旧崩溃的核心前兆 |
+| `Mean reward` / `Train/mean_reward` | 早期 -5→+15，中后期 **~20–30+** | 长期不升或断崖 | 总回报（含 AMP lerp） |
+| `Mean episode length` | 升高后多在 **~700–850** | 长期极短 | 存活时长 |
+| `track_anchor_linear_velocity` | **~0.3–0.45** | 长期接近 0 | 线速度跟踪 |
+| `track_anchor_angular_velocity` | **~0.6–0.75** | 长期接近 0 | 角速度跟踪 |
+| `root_height_progress` | 新 run 应明显高于旧失败水平，且随 iter 升 | 旧失败 run 长期 **~0.003–0.01** 横盘 | Delay/recovery 高度进度（S17 shaping） |
+| `upright_progress` | 应从噪声抬起、持续为正 | 长期 ~0 | 翻正进度（projected gravity；S17 shaping） |
+| `track_root_height` | 真站起时应明显变大 | 长期卡在 **~0.001** | 接近目标高度的 exp 奖励（delay/recovery） |
+| `mean_delay_steps` | 真起身常伴随下降 | 横盘或假下降（姿态变化提早清 delay） | **不能单独当作起身成功** |
+| `Mean amp loss` / `amp_*_pred` | amp loss ~0.2–0.4；policy 偏负、expert 偏正 | 发散或长期分不开 | AMP 判别器是否在学 |
+| Computation / Iteration time | ~1.5 s/iter（视机器） | 突然变慢、挂死 | 吞吐与卡死排查 |
+
+**旧失败对照（仅 `root_height_progress`、无 `upright_progress` 的 run，约 2k→50k）：** Mean reward 已到 ~20–30、episode length ~700+，但 `root_height_progress` / `track_root_height` 几乎横盘、`mean_delay_steps` 仅缓降至 ~28——属「走路可学、recovery 卡撑地」；此类曲线无需空等到 50k+，应 play 确认后改 MDP 再开新 run。
+
 ### 6.3 策略回放（play）
 
 `scripts/play.py` 支持三种 viewer：
@@ -679,10 +701,7 @@ python scripts/utils/validate_amp_motions.py --robot s17 \
   - `clip_actions: 10.0`
   - `rollout_reward_clip_min: -200.0`
   - `rollout_reward_clip_max: 300.0`
-3. TensorBoard 重点盯：
-  - `Loss/skipped_non_finite_batches`（应长期为 0）
-  - `Episode_Reward/action_rate_l2`（不应出现 10¹⁰+ 量级）
-  - `Loss/value_function`、`returns_min` / `returns_max`
+3. 监控指标见 **§6.2** 表格；至少确认 `skipped_non_finite_batches=0`、`action_rate_l2` 无爆炸量级。
 4. 可选 P1（尚未实现）：reset 地面抬高安全网、`nan_detection` termination、连续全 skip 自动停训、Walk 滑移数据过滤。
 
 ---
